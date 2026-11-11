@@ -1,5 +1,23 @@
 # Changelog
 
+## En desarrollo (Nexora Desktop, 2026-11-11)
+
+### Nexora Desktop (nuevo)
+- Nuevo paquete `nexora/desktop` con separación estricta modelo/vista: los modelos son Python puro, testables sin entorno gráfico; la vista GTK3 (`gtkui.py`) se importa de forma diferida y su ausencia produce un error claro, no un fallo silencioso.
+- **Nexora Shell** (`shell.py`): índice real de aplicaciones instaladas (parseo de archivos .desktop de XDG), búsqueda global (aplicaciones + comandos Nexora fijos), diseño declarativo del panel con plugins reales de xfce4-panel, notificaciones vía notify-send sin shell y escritorios virtuales declarativos para xfwm4.
+- **Nexora Dashboard** (`dashboard.py`): CPU, RAM y swap desde /proc/meminfo, GPU, temperaturas de hwmon, almacenamiento, interfaces de red, batería, procesos top por RSS real (/proc), estado de servicios con systemctl y actividad de Core/NKE. Cada sección declara su estado: ok, no_data, unavailable o error; ninguna cifra inventada.
+- **Nexora Mode Center** (`mode_center.py`): activar, combinar y desactivar los cinco modos oficiales con intensidades 1/2/3/full; cambios previstos calculados con build_allocation (plan real, no decorativo); conflictos declarativos entre modos (stealth frente a gaming/forge); recuperación de la configuración anterior mediante instantánea reversible.
+- **Nexora NKE Control** (`nke_control.py`): estado del motor, capacidades del kernel, eBPF con degradación declarada, catálogo de políticas con explicación, acciones supervisadas pendientes con aprobación/rechazo, deshacer, historial y huella propia del NKE (duración media y máxima de ciclo).
+- **Nexora Hub** (`hub.py`): agentes (modos y especialistas) con estado real de ejecución, modelos IA por proveedor sondeando solo endpoints de loopback (Ollama, llama.cpp, LocalAI; OpenAI-compatible) y herramientas instaladas por categoría XDG.
+- **Nexora System Center** (`system_center.py`): catorce secciones que reutilizan herramientas de XFCE y Linux con lista blanca de comandos fijos y ejecución sin shell; las secciones que requieren privilegios (usuarios, actualizaciones) se declaran pendientes en lugar de mostrar botones falsos.
+- **Orquestador** (`app.py`): ciclo de vida start/shutdown con registro de eventos acotado, rechazo explícito de ejecución como root, modelo completo serializable para la GUI y arranque GTK diferido.
+- **Vista GTK3** (`gtkui.py`): ventana con pestañas por módulo, tema oscuro por defecto, acento y CSS del tema Nexora-Dark si está instalado. No ejecutada aún en entorno gráfico (sin PyGObject en CI): probada la ausencia controlada.
+- **API del NKE ampliada** (`engine.py`): `last_supervised()`, `approve_proposal()` (valida categoría B, reversibilidad y pendencia; registra la decisión), `reject_proposal()` y `undo_last()`. La interfaz no ejecuta operaciones privilegiadas: pasa por esta API controlada.
+- **Integración XFCE** (`packaging/xfce/`): sesión `nexora-session.sh` con recuperación (tres fallos en 60 s devuelven el escritorio XFCE estándar y limpian procesos), autostart, scripts xfconf de panel y apariencia, y tema GTK3 oscuro Nexora-Dark.
+- **Empaquetado**: PKGBUILD con dependencias opcionales de escritorio e instalación de sesión/tema/autostart; la ISO incluye la pila XFCE mínima (xfce4, whiskermenu, thunar, networkmanager, pipewire, python-gobject, gtk3, libnotify).
+- **CLI**: `nexora desktop --json` (modelo completo) y `--gtk` (ventana); comando `nexora-desktop` como entry point del paquete.
+- **Tests**: `tests/test_desktop.py` (índice y búsqueda, estados del dashboard, procesos reales, validación de servicios, mode center con plan y rollback, NKE control con aprobaciones rechazadas sin pendencia, hub con sondeo loopback, lista blanca del system center, ciclo de vida y rechazo de root).
+
 ## En desarrollo (Fase 5: modos oficiales, 2026-11-11)
 
 ### Cinco modos oficiales con intensidades

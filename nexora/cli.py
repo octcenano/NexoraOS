@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nexora",
         description="NEXORA OS: plano de control",
-        epilog="Ejemplos: nexora health · nexora modes · nexora mode gaming --intensity 3 · nexora nke status",
+        epilog="Ejemplos: nexora health · nexora modes · nexora mode gaming --intensity 3 · nexora desktop --json",
     )
     parser.add_argument("--version", action="version", version=f"NEXORA OS {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     n = sub.add_parser("nke", help="Nexora Kernel Engine: estado, diagnóstico e historial")
     n.add_argument("action", nargs="?", choices=["status", "diagnose", "history"], default="status")
     n.add_argument("--json", action="store_true")
+
+    dt = sub.add_parser("desktop", help="Nexora Desktop (XFCE + GTK3)")
+    dt.add_argument("--json", action="store_true", help="Vuelca el modelo completo sin abrir ventana")
+    dt.add_argument("--gtk", action="store_true", help="Arranca la ventana GTK3")
     return parser
 
 
@@ -173,8 +177,7 @@ def _cmd_nke(args) -> int:
         caps = report["capabilities"]
         print(f"Nexora Kernel Engine (kernel {caps['kernel_release']})")
         print(f"  PSI: {'sí' if caps['can_psi_monitoring'] else 'no disponible'} · "
-              f"cgroups v2: {'sí' if caps['can_cgroup_limits'] else 'no disponible'} · "
-              f"cpufreq: {'sí' if caps['can_cpufreq_tuning'] else 'no disponible'}")
+              f"cgroups v2: {'sí' if caps['can_cgroup_limits'] else 'no disponible'}")
         print(f"  Ciclos ejecutados: {report['cycles']} · intervalo de sondeo: {report['monitor_interval_s']} s")
         print(f"  Historial: {report['history_summary'] or 'vacío'}")
         return 0
@@ -211,7 +214,32 @@ def _cmd_nke(args) -> int:
     return 0
 
 
+def _cmd_desktop(args) -> int:
+    """Nexora Desktop: modelo completo (--json) o ventana GTK3 (--gtk)."""
+    from nexora.desktop import DesktopUnavailableError, NexoraDesktopApp
+
+    engine = engine_from_config(cfg_global)
+    try:
+        app = NexoraDesktopApp(engine=engine)
+        app.start()
+    except PermissionError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 3
+    try:
+        if args.gtk:
+            return app.run_gtk()
+        print(json.dumps(app.layout(), ensure_ascii=False, indent=2))
+        return 0
+    except DesktopUnavailableError as exc:
+        print(f"Nexora Desktop no disponible: {exc}", file=sys.stderr)
+        return 4
+    finally:
+        if app.running:
+            app.shutdown()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    global cfg_global
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -227,7 +255,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_mode(args)
 
     try:
-        cfg = load_config()
+        cfg_global = load_config()
     except ConfigError as exc:
         print(f"Error de configuración: {exc}", file=sys.stderr)
         return 2
@@ -252,7 +280,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
 
     if args.command == "dashboard":
-        engine = engine_from_config(cfg)
+        engine = engine_from_config(cfg_global)
         try:
             dash = NexoraDashboard(engine=engine, initial_mode=args.mode or "forge")
         except ValueError as exc:
@@ -262,7 +290,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     if args.command == "health":
-        report = health_report(cfg)
+        report = health_report(cfg_global)
         if args.json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:
@@ -280,14 +308,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _cmd_audit(args)
 
     if args.command == "weather":
-        return _cmd_weather(args, cfg)
+        return _cmd_weather(args, cfg_global)
+
+    if args.command == "desktop":
+        return _cmd_desktop(args)
 
     if args.command == "ask":
         registry = ModeRegistry()
         if not registry.is_valid(args.mode):
             print(f"Error: modo desconocido: {args.mode}", file=sys.stderr)
             return 2
-        engine = engine_from_config(cfg)
+        engine = engine_from_config(cfg_global)
         if engine.simulated:
             print("Aviso: motor IA simulado; configura ai_engine.backend para usar un modelo local.", file=sys.stderr)
         print(registry.create_agent(args.mode, engine=engine).process_prompt(args.prompt))

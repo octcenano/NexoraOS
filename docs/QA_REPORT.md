@@ -13,7 +13,8 @@ Fecha: 2026-11-11. Alcance: Nexora Kernel Engine (NKE) sobre el estado de las Fa
 | Prueba | Dónde | Resultado |
 | --- | --- | --- |
 | Tests unitarios Python 3.10 y 3.12 (run de 7792bad) | GitHub Actions | NO VERIFICADO: los runs quedaron en cola (runners del plan gratuito saturados); la API de GitHub alcanzó su límite de tasa |
-| Tests de NKE (test_nke.py, test_watchdog.py actualizado) | GitHub Actions | NO VERIFICADO aún: se pushean en este commit; el resultado real se consultará en Actions |
+| Tests de NKE (test_nke.py, test_watchdog.py actualizado) | GitHub Actions | FALLO (run #10, 22 s): la CI del commit b3fdbb6 termina en fallo; lint en verde (12 s). Los logs de los jobs no son accesibles desde este entorno (requieren sesión de administrador; la API REST está limitada por tasa). Fallo pendiente de diagnóstico |
+| Tests unitarios Python de las Fases 1-2 (runs #7, #8, #9: commits 7792bad, 75fcb11, 7741cbf) | GitHub Actions | FALLO los tres: existe un fallo persistente de CI anterior a NKE que no se ha podido diagnosticar sin logs |
 | Tests locales | Este entorno | NO ejecutados: no hay intérprete Python disponible en el sandbox |
 | Aplicación real de cgroups/renice en vivo | Ninguno | NO probada: probada con executor simulado; requiere host real con permisos |
 | Arranque de la ISO | Ninguno | NO verificado: requiere QEMU o hardware |

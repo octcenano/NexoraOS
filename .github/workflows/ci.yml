@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -29,7 +33,6 @@ jobs:
           python -m unittest discover -s tests -v > test-output.log 2>&1
           status=$?
           cat test-output.log
-          # Diagnóstico en el resumen del job (visible sin sesión de administrador).
           {
             echo "### tests (${{ matrix.python-version }}): exit $status, $(wc -c < test-output.log) bytes de salida"
             if [ "$status" -ne 0 ]; then
@@ -42,6 +45,21 @@ jobs:
             grep -E '^(FAIL|ERROR):' test-output.log | head -20 | sed 's/^/::error::/'
           fi
           exit $status
+      - name: Publicar diagnóstico en un issue (los logs requieren sesión)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job tests (${{ matrix.python-version }}), commit ${{ github.sha }}."
+            echo "Salida completa de 'python -m unittest discover -s tests -v':"
+            echo '```'
+            cat test-output.log 2>/dev/null || echo "(test-output.log no existe)"
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo octcenano/NexoraOS \
+            --title "CI: fallo de tests (run ${{ github.run_number }}, py${{ matrix.python-version }})" \
+            --body-file issue-body.md
       - name: Smoke test CLI
         run: |
           nexora --help
@@ -111,17 +129,9 @@ jobs:
       - name: Instalar dependencias de construcción
         run: |
           set -o pipefail
-          pacman -Syu --noconfirm archiso python-build python-setuptools python-wheel git > pacman.log 2>&1
+          pacman -Syu --noconfirm archiso python-build python-setuptools python-wheel git gh > pacman.log 2>&1
           status=$?
           tail -n 40 pacman.log
-          if [ "$status" -ne 0 ]; then
-            {
-              echo "### iso-build: pacman exit $status"
-              echo '```'
-              tail -n 60 pacman.log
-              echo '```'
-            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          fi
           exit $status
       - name: Compilar wheel y validar perfil archiso
         run: |
@@ -139,15 +149,26 @@ jobs:
           mkarchiso -v -w out/work -o out packaging/archiso > iso.log 2>&1
           status=$?
           tail -n 40 iso.log
-          if [ "$status" -ne 0 ]; then
-            {
-              echo "### iso-build: mkarchiso exit $status"
-              echo '```'
-              tail -n 80 iso.log
-              echo '```'
-            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          fi
           if [ "$status" -eq 0 ]; then
             sha256sum out/*.iso
           fi
           exit $status
+      - name: Publicar diagnóstico en un issue (los logs requieren sesión)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job iso-build, commit ${{ github.sha }}."
+            echo "### pacman.log (tail)"
+            echo '```'
+            tail -n 60 pacman.log 2>/dev/null || echo "(pacman.log no existe)"
+            echo '```'
+            echo "### iso.log (tail)"
+            echo '```'
+            tail -n 80 iso.log 2>/dev/null || echo "(iso.log no existe)"
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo octcenano/NexoraOS \
+            --title "CI: fallo de iso-build (run ${{ github.run_number }})" \
+            --body-file issue-body.md

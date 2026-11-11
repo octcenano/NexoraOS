@@ -45,6 +45,22 @@ jobs:
             grep -E '^(FAIL|ERROR):' test-output.log | head -20 | sed 's/^/::error::/'
           fi
           exit $status
+      - name: Smoke test CLI
+        run: |
+          set -o pipefail
+          {
+            echo "### nexora --help"
+            nexora --help
+            echo "### nexora health"
+            nexora health
+            echo "### nexora-watchdog --diagnose --json"
+            nexora-watchdog --diagnose --json
+          } > smoke.log 2>&1
+          status=$?
+          cat smoke.log
+          exit $status
+      - name: Validación de configuración
+        run: python -c "import json; json.load(open('config/defaults.json')); print('defaults.json OK')"
       - name: Publicar diagnóstico en un issue (los logs requieren sesión)
         if: failure()
         env:
@@ -52,21 +68,18 @@ jobs:
         run: |
           {
             echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job tests (${{ matrix.python-version }}), commit ${{ github.sha }}."
-            echo "Salida completa de 'python -m unittest discover -s tests -v':"
+            echo "### smoke.log"
             echo '```'
-            cat test-output.log 2>/dev/null || echo "(test-output.log no existe)"
+            cat smoke.log 2>/dev/null || echo "(smoke.log no existe)"
+            echo '```'
+            echo "### test-output.log (tail)"
+            echo '```'
+            tail -n 60 test-output.log 2>/dev/null || echo "(test-output.log no existe)"
             echo '```'
           } > issue-body.md
           gh issue create --repo octcenano/NexoraOS \
-            --title "CI: fallo de tests (run ${{ github.run_number }}, py${{ matrix.python-version }})" \
+            --title "CI: fallo del job tests (run ${{ github.run_number }}, py${{ matrix.python-version }})" \
             --body-file issue-body.md
-      - name: Smoke test CLI
-        run: |
-          nexora --help
-          nexora health > /dev/null
-          nexora-watchdog --diagnose --json > /dev/null
-      - name: Validación de configuración
-        run: python -c "import json; json.load(open('config/defaults.json')); print('defaults.json OK')"
 
   lint:
     runs-on: ubuntu-latest

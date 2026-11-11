@@ -17,11 +17,11 @@ class NexoraTests(unittest.TestCase):
 
     def test_agent_memory_isolated(self):
         agent_a = BaseAgent("AgentA", mode="forge")
-        agent_b = BaseAgent("AgentB", mode="meteorology")
+        agent_b = BaseAgent("AgentB", mode="gaming")
         agent_a.remember("key", "forge_secret")
-        agent_b.remember("key", "meteo_secret")
+        agent_b.remember("key", "gaming_secret")
         self.assertEqual(agent_a.recall("key"), "forge_secret")
-        self.assertEqual(agent_b.recall("key"), "meteo_secret")
+        self.assertEqual(agent_b.recall("key"), "gaming_secret")
 
     def test_account_hub_requires_authorization(self):
         hub = AccountHub()
@@ -55,8 +55,8 @@ class NexoraTests(unittest.TestCase):
 
     def test_gui_dashboard_switch_mode(self):
         dash = NexoraDashboard()
-        self.assertTrue(dash.switch_mode("meteorology"))
-        self.assertEqual(dash.active_mode, "meteorology")
+        self.assertTrue(dash.switch_mode("gaming"))
+        self.assertEqual(dash.active_mode, "gaming")
 
     def test_meteorology_agent_attribution(self):
         meteo = MeteorologyAgent()

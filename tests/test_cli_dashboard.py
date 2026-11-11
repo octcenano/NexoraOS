@@ -31,17 +31,34 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(__version__, out)
 
-    def test_modes(self):
+    def test_modes_lists_the_five_official_modes(self):
         code, out, _ = run("modes")
         self.assertEqual(code, 0)
-        for m in ("FORGE", "METEOROLOGY", "SECURITY", "CREATOR", "OFFICE"):
+        for m in ("GAMING", "HACKING", "OFFICE", "STEALTH", "FORGE"):
             self.assertIn(m, out)
+        # Los especialistas se listan como agentes, no como modos.
+        self.assertIn("no son modos", out)
 
     def test_modes_declares_real_status(self):
         # Los modos stub se declaran como tal, no como funcionales.
         _, out, _ = run("modes")
         self.assertIn("solo registrado", out)
-        self.assertIn("funcionalidad básica", out)
+
+    def test_mode_command_shows_intensity_policy(self):
+        code, out, _ = run("mode", "gaming")
+        self.assertEqual(code, 0)
+        self.assertIn("intensidad 2", out)
+        self.assertIn("Agentes concurrentes", out)
+        self.assertIn("no modifica el sistema directamente", out)
+
+    def test_mode_command_sets_intensity(self):
+        code, out, _ = run("mode", "stealth", "--intensity", "full")
+        self.assertEqual(code, 0)
+        self.assertIn("intensidad full", out)
+        self.assertIn("aprobación explícita", out)
+
+    def test_mode_command_rejects_unknown_mode(self):
+        self.assertEqual(run("mode", "creator")[0], 2)
 
     def test_profile_explicit_and_warning(self):
         code, out, _ = run("profile", "--cpu-cores", "2", "--ram-gb", "4")
@@ -54,10 +71,12 @@ class CliTests(unittest.TestCase):
     def test_dashboard_text_and_json(self):
         code, out, _ = run("dashboard")
         self.assertIn("[forge]", out)
-        _, out, _ = run("dashboard", "--mode", "meteorology", "--json")
+        self.assertIn("Intensidad", out)
+        _, out, _ = run("dashboard", "--mode", "gaming", "--json")
         data = json.loads(out)
-        self.assertEqual(data["active_mode"], "meteorology")
-        self.assertEqual(data["widgets"]["active_agent"], "MeteorologyAgent")
+        self.assertEqual(data["active_mode"], "gaming")
+        self.assertEqual(data["widgets"]["active_agent"], "GamingAgent")
+        self.assertEqual(data["widgets"]["active_intensity"], "2")
         self.assertEqual(run("dashboard", "--mode", "nope")[0], 2)
 
     def test_dashboard_json_includes_mode_status(self):
@@ -114,13 +133,27 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(dash.switch_mode("nope"))
         self.assertEqual(dash.active_mode, "forge")
 
+    def test_only_official_modes_switch(self):
+        dash = NexoraDashboard()
+        self.assertFalse(dash.switch_mode("creator"))
+        self.assertFalse(dash.switch_mode("meteorology"))
+        self.assertTrue(dash.switch_mode("gaming"))
+        self.assertEqual(dash.active_mode, "gaming")
+
     def test_agent_memory_survives_mode_switch_but_stays_private(self):
         dash = NexoraDashboard()
         dash.active_agent.remember("k", "forge-data")
-        dash.switch_mode("meteorology")
+        dash.switch_mode("gaming")
         self.assertIsNone(dash.active_agent.recall("k"))
         dash.switch_mode("forge")
         self.assertEqual(dash.active_agent.recall("k"), "forge-data")
+
+    def test_set_intensity_updates_widget(self):
+        dash = NexoraDashboard()
+        dash.set_intensity("3")
+        self.assertEqual(dash.widgets["active_intensity"], "3")
+        with self.assertRaises(ValueError):
+            dash.set_intensity("11")
 
     def test_widgets_reflect_account_hub_live(self):
         hub = AccountHub()
@@ -132,8 +165,8 @@ class DashboardTests(unittest.TestCase):
 
     def test_ask_goes_through_active_agent_and_engine(self):
         dash = NexoraDashboard(engine=LocalAIEngine())
-        dash.switch_mode("meteorology")
-        self.assertIn("simulada", dash.ask("¿lloverá mañana?"))
+        dash.switch_mode("office")
+        self.assertIsInstance(dash.ask("hola"), str)
 
 
 class HealthTests(unittest.TestCase):

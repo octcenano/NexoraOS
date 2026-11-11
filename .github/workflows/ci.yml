@@ -169,7 +169,11 @@ jobs:
 
   iso-build:
     runs-on: ubuntu-latest
-    container: archlinux:base
+    # mkarchiso necesita montar proc y dev en el chroot de instalacion:
+    # sin --privileged el mount falla con "permission denied".
+    container:
+      image: archlinux:base
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
       - name: Instalar dependencias de construcción

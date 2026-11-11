@@ -8,7 +8,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="$ROOT/packaging/archiso"
 OUT="$ROOT/out"
 SKIP_TESTS=false
-[[ "${1:-}" == "--skip-tests" ]] && SKIP_TESTS=true
+if [[ "${1:-}" == "--skip-tests" ]]; then
+  SKIP_TESTS=true
+fi
 
 fail() { echo "[build-iso] ERROR: $*" >&2; exit 1; }
 info() { echo "[build-iso] $*"; }
@@ -38,7 +40,7 @@ python -m build --wheel --no-isolation
 WHEELS="$(ls dist/*.whl 2>/dev/null || true)"
 [[ -n "$WHEELS" ]] || fail "no se generó ningún wheel en dist/."
 # Solo el wheel recién generado debe ir a la ISO: limpia dist de wheels viejos.
-WHEEL_COUNT="$(printf '%s\n' $WHEELS | wc -l)"
+WHEEL_COUNT="$(printf '%s\n' "$WHEELS" | wc -l)"
 if [[ "$WHEEL_COUNT" -gt 1 ]]; then
   fail "dist/ contiene varios wheels ($WHEEL_COUNT); elimina los antiguos para no empaquetar artefactos dudosos."
 fi

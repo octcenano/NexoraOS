@@ -8,11 +8,11 @@ import sys
 from typing import Optional, Sequence
 
 from nexora import __version__
-from nexora.agents.meteorology import OpenMeteoProvider, SimulatedWeatherProvider, WeatherProviderError
+from nexora.agents.meteorology import MeteorologyAgent, OpenMeteoProvider, SimulatedWeatherProvider, WeatherProviderError
 from nexora.core.ai_engine import engine_from_config
 from nexora.core.config import ConfigError, load_config
 from nexora.core.profiles import calculate_hybrid_profile, detect_hardware
-from nexora.core.registry import ModeRegistry
+from nexora.core.registry import INTENSITY_LEVELS, ModeRegistry, SPECIALIST_AGENTS
 from nexora.diagnostics.health import health_report
 from nexora.ui.dashboard import NexoraDashboard
 from nexora.watchdog import watchdog_from_config
@@ -22,17 +22,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nexora",
         description="NEXORA OS: plano de control",
-        epilog="Ejemplos: nexora health · nexora weather Madrid --live · nexora audit · nexora nke status",
+        epilog="Ejemplos: nexora health · nexora modes · nexora mode gaming --intensity 3 · nexora nke status",
     )
     parser.add_argument("--version", action="version", version=f"NEXORA OS {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("modes", help="Lista los modos registrados con su estado real")
+    sub.add_parser("modes", help="Lista los cinco modos oficiales con su estado real")
 
     p = sub.add_parser("profile", help="Calcula el perfil híbrido")
     p.add_argument("--profile", choices=["auto", "compact", "balanced", "expanded", "manual"], default="auto")
     p.add_argument("--cpu-cores", type=int, help="Por defecto, detectado del sistema")
     p.add_argument("--ram-gb", type=float, help="Por defecto, detectado del sistema")
+
+    m = sub.add_parser("mode", help="Muestra o fija la intensidad de un modo oficial")
+    m.add_argument("name", help="Modo oficial: gaming, hacking, office, stealth o forge")
+    m.add_argument("--intensity", choices=list(INTENSITY_LEVELS), help="Nivel de intensidad a fijar")
 
     d = sub.add_parser("dashboard", help="Muestra el estado del dashboard")
     d.add_argument("--mode", help="Modo activo inicial")
@@ -41,24 +45,47 @@ def build_parser() -> argparse.ArgumentParser:
     h = sub.add_parser("health", help="Diagnóstico del sistema")
     h.add_argument("--json", action="store_true")
 
-    w = sub.add_parser("weather", help="Observación meteorológica")
+    w = sub.add_parser("weather", help="Observación meteorológica (agente especializado)")
     w.add_argument("location")
     w.add_argument("--live", action="store_true", help="Consulta Open-Meteo (envía la ubicación a un servicio externo)")
 
-    a = sub.add_parser("ask", help="Consulta al motor IA local desde un modo")
+    a = sub.add_parser("ask", help="Consulta al motor IA local desde un modo oficial")
     a.add_argument("prompt")
     a.add_argument("--mode", default="forge")
 
     s = sub.add_parser("status", help="Supervisión del core (watchdog, una pasada)")
     s.add_argument("--json", action="store_true")
 
-    u = sub.add_parser("audit", help="Auditoría defensiva de solo lectura (modo Security)")
+    u = sub.add_parser("audit", help="Auditoría defensiva de solo lectura (seguridad transversal)")
     u.add_argument("--json", action="store_true")
 
     n = sub.add_parser("nke", help="Nexora Kernel Engine: estado, diagnóstico e historial")
     n.add_argument("action", nargs="?", choices=["status", "diagnose", "history"], default="status")
     n.add_argument("--json", action="store_true")
     return parser
+
+
+def _cmd_mode(args) -> int:
+    """Intensidad de un modo oficial: política real, sin efectos sobre el sistema."""
+    registry = ModeRegistry()
+    if not registry.is_valid(args.name):
+        print(f"Error: modo desconocido: {args.name}", file=sys.stderr)
+        print("Modos oficiales: " + ", ".join(registry.names()), file=sys.stderr)
+        return 2
+    if args.intensity:
+        registry.set_intensity(args.name, args.intensity)
+    level = args.intensity or registry.intensity(args.name)
+    info = registry.intensity_policy(args.name, level)
+    pol = info["policy"]
+    print(f"Modo {args.name} · intensidad {level} ({pol.level})")
+    print(f"  Efecto declarado: {info['effect']}")
+    print(f"  Agentes concurrentes: {pol.concurrent_agents}")
+    print(f"  RAM máxima para modelos: {pol.max_model_ram_gb} GB")
+    print(f"  Peso de CPU en el reparto: {pol.cpu_weight}")
+    print(f"  Ajuste agresivo: {'sí, exige compatibilidad comprobada y aprobación explícita' if pol.aggressive_tuning else 'no'}")
+    print("  Nota: la intensidad es una política que consume el reparto de recursos")
+    print("  (build_allocation); no modifica el sistema directamente.")
+    return 0
 
 
 def _cmd_profile(args) -> int:
@@ -90,8 +117,7 @@ def _cmd_profile(args) -> int:
 def _cmd_weather(args, cfg) -> int:
     live = args.live or cfg["meteorology"]["provider"] == "open-meteo"
     provider = OpenMeteoProvider() if live else SimulatedWeatherProvider()
-    registry = ModeRegistry()
-    agent = registry.create_agent("meteorology", provider=provider)
+    agent = MeteorologyAgent(provider=provider)
     try:
         obs = agent.get_weather_observation(args.location)
     except (WeatherProviderError, ValueError) as exc:
@@ -197,6 +223,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command == "nke":
         return _cmd_nke(args)
 
+    if args.command == "mode":
+        return _cmd_mode(args)
+
     try:
         cfg = load_config()
     except ConfigError as exc:
@@ -204,11 +233,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     if args.command == "modes":
-        print(f"--- Modos de NEXORA OS (v{__version__}) ---")
-        for mode, data in ModeRegistry().get_modes().items():
+        print(f"--- Modos oficiales de NEXORA OS (v{__version__}) ---")
+        registry = ModeRegistry()
+        for mode, data in registry.get_modes().items():
             estado = {"stub": "solo registrado", "basic": "funcionalidad básica"}.get(data.get("status", "stub"),
                                                                                        data.get("status", "stub"))
-            print(f"- {mode.upper()}: {data['description']} [{estado}]")
+            print(f"- {mode.upper()}: {data['description']} [{estado}] (intensidad por defecto: {registry.intensity(mode)})")
+        print("--- Agentes especializados (no son modos) ---")
+        for name, data in SPECIALIST_AGENTS.items():
+            print(f"- {name}: {data['description']}")
         return 0
 
     if args.command == "profile":

@@ -225,9 +225,21 @@ class SystemCenterTests(unittest.TestCase):
                               ("available", "unavailable", "not_implemented"))
 
     def test_launch_whitelist(self):
+        import shutil
         sc = SystemCenter()
+        # Fuera de la lista blanca: rechazado siempre.
         self.assertEqual(sc.launch("rm -rf /")["state"], "rejected")
-        self.assertEqual(sc.launch("nonexistent-cmd")["state"], "unavailable")
+        self.assertEqual(sc.launch("nonexistent-cmd")["state"], "rejected")
+        # En la lista blanca pero no instalado en este sistema: unavailable.
+        missing = []
+        for spec in SECTIONS.values():
+            for entry in spec["entries"]:
+                cmd = entry.get("command")
+                if cmd and shutil.which(cmd) is None:
+                    missing.append(cmd)
+        if not missing:
+            self.skipTest("todas las herramientas de la lista blanca están instaladas")
+        self.assertEqual(sc.launch(missing[0])["state"], "unavailable")
 
     def test_launch_disabled_context(self):
         sc = SystemCenter(allow_launch=False)

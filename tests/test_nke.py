@@ -279,15 +279,16 @@ class EngineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine, proc = self._engine(tmp, psi_memory="50.00")
 
-            # Tras el primer muestreo, la presión empeora: el motor debe revertir.
+            # A partir del segundo muestreo (el posterior a la aplicación), la
+            # presión de memoria empeora: el motor debe revertir lo aplicado.
             original_sample = engine.monitor.sample
             calls = {"n": 0}
             def sample():
                 calls["n"] += 1
-                s = original_sample()
-                if calls["n"] >= 2:  # muestreo post-aplicación (2.º muestreo del ciclo)
-                    (proc / "pressure" / "memory").write_text("some avg10=90.00 avg60=0.00 avg300=0.00\nfull avg10=0.00\n")
-                return s
+                if calls["n"] >= 2:
+                    (proc / "pressure" / "memory").write_text(
+                        "some avg10=90.00 avg60=0.00 avg300=0.00\nfull avg10=0.00\n")
+                return original_sample()
             engine.monitor.sample = sample
             cycle = engine.run_cycle()
             self.assertTrue(cycle["rolled_back"])

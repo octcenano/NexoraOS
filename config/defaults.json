@@ -1,0 +1,26 @@
+{
+  "product": "NEXORA OS",
+  "version": "0.2.0-beta",
+  "profile_strategy": "hybrid",
+  "browsers": ["firefox", "librewolf"],
+  "agent_memory_policy": "isolated_per_mode",
+  "modes_enabled": ["forge", "meteorology", "security", "creator", "office"],
+  "ai_engine": {
+    "backend": "local_mock",
+    "model": "nexora-local-q4",
+    "endpoint": "",
+    "allow_remote": false
+  },
+  "meteorology": {
+    "provider": "simulated"
+  },
+  "vault": {
+    "backend": "memory"
+  },
+  "telemetry": {
+    "enabled": false
+  },
+  "permissions": {
+    "require_explicit_grant": true
+  }
+}

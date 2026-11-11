@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexora-os"
+dynamic = ["version"]
+description = "Entorno modular orientado a agentes (prototipo)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+keyring = ["keyring>=24"]
+
+[project.scripts]
+nexora = "nexora.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "nexora.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["nexora*"]
+
+[tool.setuptools.package-data]
+nexora = ["config/defaults.json"]

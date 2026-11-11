@@ -38,7 +38,7 @@ class WatchdogTest(unittest.TestCase):
             return state["n"] >= 2
 
         def recover():
-            state["n"] += 1
+            state["n"] = 2
             return True
 
         wd.register(Component("svc", unhealthy, recover=recover))

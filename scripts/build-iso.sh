@@ -27,24 +27,20 @@ cd "$ROOT"
 # --- artefactos antiguos ----------------------------------------------------
 # Evita reutilizar ISOs y wheels antiguos: se eliminan antes de compilar.
 mkdir -p "$OUT"
-OLD_ISOS="$(find "$OUT" -maxdepth 1 -name '*.iso' 2>/dev/null || true)"
-if [[ -n "$OLD_ISOS" ]]; then
-  info "Eliminando ISO(s) antigua(s) en out/ para que el artefacto validado sea solo el nuevo:"
-  rm -fv "$OUT"/*.iso "$OUT"/*.sha256
-fi
-rm -fv "$PROFILE/airootfs/root/"nexora_os-*.whl 2>/dev/null || true
+find "$OUT" -maxdepth 1 -name '*.iso' -print -delete
+find "$OUT" -maxdepth 1 -name '*.sha256' -delete
+find "$PROFILE/airootfs/root" -maxdepth 1 -name 'nexora_os-*.whl' -delete 2>/dev/null || true
 
 # --- build y tests ----------------------------------------------------------
 info "Compilando wheel de nexora-os..."
 python -m build --wheel --no-isolation
-WHEELS="$(ls dist/*.whl 2>/dev/null || true)"
-[[ -n "$WHEELS" ]] || fail "no se generó ningún wheel en dist/."
-# Solo el wheel recién generado debe ir a la ISO: limpia dist de wheels viejos.
-WHEEL_COUNT="$(printf '%s\n' "$WHEELS" | wc -l)"
+WHEEL="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+[[ -n "$WHEEL" ]] || fail "no se generó ningún wheel en dist/."
+WHEEL_COUNT="$(find dist -maxdepth 1 -name '*.whl' | wc -l)"
 if [[ "$WHEEL_COUNT" -gt 1 ]]; then
   fail "dist/ contiene varios wheels ($WHEEL_COUNT); elimina los antiguos para no empaquetar artefactos dudosos."
 fi
-info "Wheel generado: $WHEELS"
+info "Wheel generado: $WHEEL"
 
 if [[ "$SKIP_TESTS" == false ]]; then
   info "Ejecutando tests..."
@@ -64,16 +60,18 @@ fi
 
 info "Copiando wheel al perfil archiso..."
 mkdir -p "$PROFILE/airootfs/root"
-cp "$WHEELS" "$PROFILE/airootfs/root/"
+cp -- "$WHEEL" "$PROFILE/airootfs/root/"
 
 info "Generando ISO live (esto descarga paquetes y puede tardar)..."
 mkarchiso -v -w "$OUT/work" -o "$OUT" "$PROFILE"
 
 # --- verificación posterior (solo el artefacto recién generado) --------------
-ISO="$(find "$OUT" -maxdepth 1 -name '*.iso' | head -n1)"
+ISO="$(find "$OUT" -maxdepth 1 -name '*.iso' -print -quit)"
 [[ -n "$ISO" ]] || fail "mkarchiso terminó pero no hay .iso en out/."
 ISO_COUNT="$(find "$OUT" -maxdepth 1 -name '*.iso' | wc -l)"
-[[ "$ISO_COUNT" -eq 1 ]] || fail "hay $ISO_COUNT ISOs en out/; no está claro cuál es la nueva. Abortando."
+if [[ "$ISO_COUNT" -ne 1 ]]; then
+  fail "hay $ISO_COUNT ISOs en out/; no está claro cuál es la nueva. Abortando."
+fi
 
 info "Verificando la ISO generada: $ISO"
 ls -lh "$ISO"

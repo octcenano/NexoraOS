@@ -53,7 +53,7 @@ class ReadOnlyAuditTest(unittest.TestCase):
         self.assertEqual(sockets, [("tcp", 22)])
 
     def test_sync_pacman_inexistente(self):
-        with mock.patch.object(Path, "stat", side_effect=OSError):
+        with mock.patch.object(security.os, "stat", side_effect=OSError):
             self.assertIsNone(security._pacman_sync_age_days())
 
 

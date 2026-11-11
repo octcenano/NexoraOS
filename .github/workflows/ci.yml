@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Instalar dependencias de construcción
         run: |
-          pacman -Syu --noconfirm archiso python-build git
+          pacman -Syu --noconfirm archiso python-build python-setuptools python-wheel git
       - name: Compilar wheel y validar perfil archiso
         run: |
           python -m build --wheel --no-isolation

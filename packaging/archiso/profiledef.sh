@@ -8,7 +8,9 @@ iso_publisher="NEXORA OS Project <https://github.com/octcenano/NexoraOS>"
 iso_application="NEXORA OS Beta Live"
 iso_version="0.4.0"
 install_dir="nexora"
-bootmodes=('bios.syslinux' 'uefi.systemd')
+# Modos de arranque validos en archiso actual: bios.syslinux y uefi.systemd-boot
+# (uefi.systemd ya no existe y hace abortar la validacion del perfil).
+bootmodes=('bios.syslinux' 'uefi.systemd-boot')
 arch="x86_64"
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"

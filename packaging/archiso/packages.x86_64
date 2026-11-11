@@ -3,6 +3,8 @@ linux
 linux-firmware
 mkinitcpio
 archiso
+syslinux
+efibootmgr
 python
 sudo
 nano

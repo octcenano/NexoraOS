@@ -1,22 +1,31 @@
 # Roadmap — NexoraOS
 
-## Beta 0.4 (actual, 2026-11-11)
+## Fase 1 — Estabilización (2026-11-11, hecha salvo verificación de CI)
 
-- Watchdog: diagnóstico sin efectos, historial de incidencias, protección anti-bucle, unidades systemd con límites. (Implementado; systemd no verificado en host real.)
-- Motor IA: list_models/has_model/select_model/detect_backends, errores de conexión gestionados. (Implementado; probado con transporte falso, no contra backends reales.)
-- Security: inventario de puertos, comprobación de actualizaciones, recomendaciones, informe explícito. (Implementado y probado.)
-- Build ISO: artefactos antiguos eliminados, verificación del artefacto nuevo. (Implementado; ISO no construida aún.)
+- Corregido el test de cooldown del watchdog (regresión introducida en 0.4).
+- CI sin ocultación de errores (`|| true` y `continue-on-error` eliminados) y con diagnóstico visible (anotaciones).
+- Job de ISO real en contenedor arch:base (pendiente de primera ejecución completa).
+- Pendiente: confirmar CI verde en los runs de los commits 7792bad y posteriores.
 
-## Beta 0.5 (objetivo)
+## Fase 2 — Arquitectura (2026-11-11, base implementada)
 
-1. Construir y verificar la ISO en CI (job iso-build estable, sin continue-on-error) y probar arranque en QEMU.
-2. Pruebas de integración contra Ollama real en CI (servicio efímero con un modelo mínimo, solo si el runner lo permite).
-3. Verificar las unidades systemd en un host Arch real.
-4. Primer diseño de la interfaz gráfica (maqueta + arquitectura, sin fingir implementación).
-5. Instalador guiado por CLI mejorado en la ISO.
+- `nexora/core/resources.py`: inventario real, niveles level1/level2/level3/full como políticas verificables, perfiles híbridos con modo primario y planes reversibles. (Implementado y probado; sin aplicación al sistema en vivo todavía.)
+- `nexora/core/coordinator.py`: coordinador con permisos, aprobación e historial. (Implementado y probado.)
+- Pendiente: aplicar planes reales (CPU governor, cgroups por agente) con aprobación explícita; integración del coordinador con la CLI y el dashboard.
 
-## Después
+## Fase 3 — Integración de modos (pendiente)
 
-- GUI ligera (GTK/Qt según consumo) y instalador gráfico.
-- Perfiles híbridos automáticos con control manual (base ya presente en profiles.py).
-- Modos Creator y Office con herramientas propias.
+- Gaming, Office/Study, Stealth, Forge y catálogo Hacking con herramientas declaradas y aprobación humana para operaciones sensibles. Sin capacidades ofensivas autónomas.
+- Model Manager sobre ai_engine (requisitos RAM/VRAM por modelo, selección por tarea).
+
+## Fase 4 — Interfaz gráfica (pendiente)
+
+- Dashboard, centro de agentes, centro de perfiles y centro de IA sobre el modelo de estado existente (render_layout). Sin implementación todavía.
+
+## Fase 5 — Distribución (pendiente)
+
+- ISO reproducible verificada en CI, arranque probado en QEMU, instalador guiado, configuración regional española.
+
+## Notas de reorganización
+
+- La Fase 2 se adelantó respecto al plan original porque el coordinador y el gestor de recursos son prerrequisito de los modos (Fase 3) y de la GUI (Fase 4): sin reparto de recursos y sin política de tareas, los modos serían etiquetas.

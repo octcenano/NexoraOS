@@ -32,6 +32,12 @@ jobs:
           if grep -qE '^(FAIL|ERROR):' test-output.log; then
             grep -E '^(FAIL|ERROR):' test-output.log | head -20 | sed 's/^/::error::/'
           fi
+          # Los logs completos requieren sesión de administrador: si el paso falla
+          # sin líneas FAIL/ERROR (p. ej. traceback temprano), se vuelca la salida
+          # real como anotaciones para poder diagnosticarla sin sesión.
+          if [ "$status" -ne 0 ]; then
+            tail -n 80 test-output.log | sed 's/^/::error::/'
+          fi
           exit $status
       - name: Smoke test CLI
         run: |

@@ -37,16 +37,19 @@ Todos los anteriores: ver `CHANGELOG.md` 0.4.0-beta. Cada corrección tiene test
 
 | Prueba | Dónde | Resultado |
 | --- | --- | --- |
-| Tests unitarios Python 3.10 y 3.12 | GitHub Actions (workflow CI) | Pendiente de confirmar resultado real en https://github.com/octcenano/NexoraOS/actions |
+| Tests unitarios Python 3.10 y 3.12 (Beta 0.3, run #2) | GitHub Actions | FALLO en ambos: dos regresiones en tests (corregidas en 75248b9) |
+| Tests unitarios Python 3.10 y 3.12 (Beta 0.4, run #3) | GitHub Actions | FALLO en ambos: mismas regresiones de tests; corregidas en 75248b9, run de verificación en cola |
+| ShellCheck (runs #2 y #3) | GitHub Actions | FALLO (exit 1): avisos en build-iso.sh; reescrito y shellcheck-clean en 75248b9 |
+| Build del wheel e instalación limpia (run #3, job package) | GitHub Actions | OK: wheel construido, instalado y CLI arranca |
+| Gitleaks (run #2) | GitHub Actions | OK: sin secretos |
+| Job ISO en contenedor arch (run #3) | GitHub Actions | FALLO al compilar el wheel (setuptools ausente); corregido en 75248b9 añadiendo python-setuptools/python-wheel |
 | Tests locales | Este entorno | NO ejecutados: no hay intérprete Python disponible en el sandbox |
-| ShellCheck / bash -n | GitHub Actions (job lint) | Pendiente de confirmar |
-| Construcción de ISO | GitHub Actions (job iso-build, experimental) | Pendiente de confirmar; no ejecutable localmente (sin mkarchiso) |
 | Arranque de la ISO | Ninguno | NO verificado: requiere QEMU o hardware |
 
 ## 8. Limitaciones del entorno
 
 - Sin Python, mkarchiso, makepkg, shellcheck ni QEMU en el entorno de trabajo local.
-- CI del plan gratuito puede permanecer en cola; si no llega a ejecutarse, los resultados de CI quedan sin confirmar y no se crea el tag de versión hasta tener CI verde.
+- La API de GitHub se consulta sin autenticación desde este entorno y alcanza su límite de tasa, lo que impide verificar en vivo los runs #4/#5; el tag v0.4.0 no se crea hasta tener CI verde.
 
 ## 9. Riesgos conocidos
 

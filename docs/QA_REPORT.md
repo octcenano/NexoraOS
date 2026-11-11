@@ -1,51 +1,47 @@
-# Informe de calidad (QA) — NKE y Fases 1-2
+# Informe de calidad (QA) — Nexora Desktop, modos oficiales, NKE y CI
 
-Fecha: 2026-11-11. Alcance: Nexora Kernel Engine (NKE) sobre el estado de las Fases 1-2 (commits 7792bad, 75fcb11, 7741cbf).
+Fecha: 2026-11-11. Alcance: estado tras Nexora Desktop, los cinco modos oficiales, el NKE y la corrección de la CI (HEAD faa9012).
 
-## 1. Qué se implementó en NKE
-
-- Motor completo en espacio de usuario: detección de capacidades, monitor adaptativo, analizador, motor de políticas con categorías A/B/C, Safety Controller con rollback, historial, ciclo del motor con cooldowns y CLI.
-- Integración: subcomando `nexora nke`, comando `nexora-nke`, panel Kernel Engine en el dashboard, componente `nke` en el watchdog, unidad systemd endurecida, instalación por PKGBUILD.
-- Documentación: `docs/NKE.md`.
-
-## 2. Pruebas ejecutadas y resultados exactos
+## 1. Pruebas ejecutadas y resultados exactos (CI, GitHub Actions)
 
 | Prueba | Dónde | Resultado |
 | --- | --- | --- |
-| Tests unitarios Python 3.10 y 3.12 (run de 7792bad) | GitHub Actions | NO VERIFICADO: los runs quedaron en cola (runners del plan gratuito saturados); la API de GitHub alcanzó su límite de tasa |
-| Tests de NKE (test_nke.py, test_watchdog.py actualizado) | GitHub Actions | FALLO (run #10, 22 s): la CI del commit b3fdbb6 termina en fallo; lint en verde (12 s). Los logs de los jobs no son accesibles desde este entorno (requieren sesión de administrador; la API REST está limitada por tasa). Fallo pendiente de diagnóstico |
-| Tests unitarios Python de las Fases 1-2 (runs #7, #8, #9: commits 7792bad, 75fcb11, 7741cbf) | GitHub Actions | FALLO los tres: existe un fallo persistente de CI anterior a NKE que no se ha podido diagnosticar sin logs |
-| Tests locales | Este entorno | NO ejecutados: no hay intérprete Python disponible en el sandbox |
-| Aplicación real de cgroups/renice en vivo | Ninguno | NO probada: probada con executor simulado; requiere host real con permisos |
+| Tests unitarios (248 tests, Python 3.10 y 3.12) | GitHub Actions, run #34 en adelante (commit 48c2de4) | VERDE: el job tests pasó en todos los runs desde la corrección de los dos tests (no se publicó ningún issue de tests desde el run 34) |
+| Smoke test CLI (nexora --help, nexora health, nexora-watchdog --diagnose) | GitHub Actions | VERDE desde el run 34 |
+| Lint (ShellCheck, bash -n, gitleaks 8.21.2) | GitHub Actions | VERDE (runs 33-39) |
+| Construcción y validación del wheel | GitHub Actions | VERDE (sin issue de package desde que existe diagnóstico) |
+| Construcción de la ISO | GitHub Actions, runs 35-39 | PROGRESO: validación del perfil superada (run 38), montaje del chroot superado con contenedor privilegiado, sincronización de pacman corregida (SigLevel); el último run (SigLevel) seguía en cola o compilando al cerrar este informe |
+| Tests locales | Este entorno | NO ejecutados: no hay intérprete Python en el sandbox; toda la validación se hace en CI |
+| Vista GTK3 de Nexora Desktop | Ninguno | NO ejecutada: sin PyGObject ni sesión gráfica; probada la ausencia controlada (error claro) |
 | Arranque de la ISO | Ninguno | NO verificado: requiere QEMU o hardware |
-| Consumo de NKE en vivo | Ninguno | NO medido en host real; el diseño limita la huella (sondeo adaptativo, MemoryMax=80M, CPUQuota=2%) |
+| Consumo en reposo del escritorio | Ninguno | NO medido: no se publican cifras sin medición reproducible |
 
-## 3. Bugs encontrados y corregidos en este ciclo
+## 2. Bugs encontrados y corregidos (este ciclo, con causa raíz)
 
-1. El Safety Controller derivaba mal las rutas de cpufreq desde el punto de montaje de cgroups: corregido con parámetro `sys_root` explícito.
-2. El umbral del test de rollback por degradación era incorrecto (contaba un ciclo de menos): corregido a dos ciclos sin mejora.
-3. El test `test_watchdog_from_config` no contemplaba el nuevo componente `nke`: actualizado.
+1. Cooldown del NKEngine a t=0: `now - 0.0 < 300` bloqueaba toda acción automática al arrancar. Corregido: solo aplica cooldown si hay acción previa registrada.
+2. `defaults.json` empaquetado desactualizado (0.2.0-beta frente a 0.4.0-beta): `nexora health` fallaba en el smoke test de CI.
+3. `test_degradacion_provoca_rollback`: el muestreo reescribía PSI después de leer; corregido para escribir antes de leer.
+4. `service_state` y sockets: aceptar tcp y tcp6 (el mock de builtins.open hacía que ambas familias leyeran el mismo contenido).
+5. `profiledef.sh`: bloque INI inválido `[build] options=()` sustituido por `buildmodes=('iso')`.
+6. Validación de mkarchiso (issue 35): `uefi.systemd` no es un modo válido (es `uefi.systemd-boot`); faltaba el paquete syslinux, el directorio syslinux/ y efiboot/loader/entries. Corregido con profiledef, syslinux.cfg, loader.conf y entrada UEFI.
+7. mkarchiso no puede montar proc en un contenedor sin privilegios (issue 38): `container: options: --privileged` en CI.
+8. pacman abortaba por *.db.sig 404 (issue 39): `SigLevel = Required DatabaseOptional` (estándar releng) en el pacman.conf del perfil.
+9. Tests desalineados con la API real: `intensity_policy()` devuelve un dict (no un objeto con .policy) y `SystemCenter.launch()` rechaza con "rejected" los comandos fuera de la lista blanca (no "unavailable"). Tests corregidos.
+10. Diagnóstico de CI ilegible (logs 403): los tres jobs (tests, package, iso-build) publican ahora su diagnóstico en un issue al fallar; iso-build lo hace vía API con curl porque gh no existe en el contenedor Arch.
 
-## 4. Problemas de UX/UI
+## 3. Estado por área
 
-- El panel Kernel Engine del dashboard es de texto y muestra estado y capacidades; las propuestas B/C aún no tienen flujo de aprobación interactivo (se listan con su comando de revisión).
-- Sin GUI: documentado como pendiente.
+- Nexora Desktop: modelos completos con datos reales y estados explícitos; vista GTK3 implementada, no ejecutada visualmente.
+- Modos oficiales: cinco modos con intensidades 1/2/3/full respaldadas por LevelPolicy reales; agentes específicos de cada modo pendientes (estado declarado: stub).
+- NKE: motor, categorías A/B/C, rollback, API de aprobación; sin verificación en host real.
+- Watchdog: 4 componentes, diagnóstico sin efectos, anti-bucle.
+- Seguridad: auditoría defensiva de solo lectura; interfaz sin root; lista blanca de comandos; sin ejecución de comandos generados por modelos.
 
-## 5. Seguridad
+## 4. Limitaciones y pendientes
 
-- NKE nunca ejecuta la categoría C; las propuestas C se marcan con `executed_by_nke: false`.
-- Los agentes no acceden a `/proc` ni `/sys`: solo ExtensionAPI de consultas cerradas.
-- La unidad nexora-nke.service usa DynamicUser y endurecimiento completo; en ese modo los writes privilegiados se deniegan y registran (comportamiento previsto y documentado).
-- Sin secretos ni datos personales en el código (gitleaks en CI).
-
-## 6. Estado de watchdogs y daemons
-
-- Watchdog del core: 4 componentes (config, agent_isolation, vault, nke); diagnóstico sin efectos; anti-bucle en modo bucle.
-- NKE: no es daemon obligatorio; unidad systemd opcional con límites estrictos y protección anti-bucle propia (exit 3 tras errores consecutivos).
-
-## 7. Limitaciones y pendientes
-
-- eBPF: la detección de capacidad existe; los programas eBPF concretos son una fase posterior (documentado en docs/NKE.md).
-- GPU/VRAM y batería: el monitor de NKE aún no las lee (resources.py del core sí).
-- CI: pendiente de confirmar runs verdes; el tag v0.4.0 no se crea hasta tener CI verde.
-- Sin pruebas contra Ollama/llama.cpp reales (validado con transporte falso que replica sus APIs).
+- Confirmar el run de CI con la construcción completa de la ISO; el tag v0.4.0 no se crea hasta tener CI verde.
+- eBPF: detección y degradación declarada; programas eBPF concretos pendientes.
+- cgroups/renice aplicados en vivo: requiere host real.
+- Pruebas contra Ollama/llama.cpp reales: validado con transporte falso que replica sus APIs.
+- ZIP obsoleto NEXORA_OS_BETA_0.2.zip en la raíz del repositorio: el conector no permite borrar archivos; borrado manual pendiente.
+- Issues de diagnóstico de CI (1-39) abiertos: se cerrarán cuando la CI esté completamente verde.

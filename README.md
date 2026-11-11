@@ -7,7 +7,10 @@ Entorno modular de agentes (plano de control en Python) pensado para convertirse
 | Área | Estado |
 | --- | --- |
 | CLI (`nexora`) | Implementada y probada por tests unitarios |
-| Modos (forge, meteorology, security, creator, office) | Implementados como agentes con memoria aislada; security y meteorology con lógica propia, el resto básicos |
+| Modos oficiales (gaming, hacking, office, stealth, forge) | Registrados con memoria aislada, política de herramientas e intensidades 1/2/3/full respaldadas por políticas reales del núcleo adaptativo. Los agentes específicos de cada modo están pendientes (estado declarado: stub) |
+| Agentes especializados | Meteorology (observación meteorológica) y Security (auditoría defensiva de solo lectura) con lógica propia; no son modos |
+| Núcleo adaptativo | Inventario real del sistema, niveles level1/2/3/full y planes de asignación reversibles |
+| NKE (Kernel Engine) | Motor en espacio de usuario sobre PSI, /proc, /sys, cgroups v2 y systemd; categorías A/B/C con rollback. No verificado en un host real |
 | Motor IA local | Ollama y OpenAI-compatible implementados contra loopback; probado con transporte falso en tests y con mock. No probado contra Ollama real |
 | Bóveda de secretos | Memoria por defecto; keyring del SO si python-keyring está disponible. Sin secretos en texto plano |
 | Watchdog | Implementado (pasada única, diagnóstico, bucle acotado). Unidad systemd incluida, no verificada en un sistema real |
@@ -21,6 +24,7 @@ Entorno modular de agentes (plano de control en Python) pensado para convertirse
 python -m pip install .
 nexora --help
 nexora health
+nexora modes
 nexora-watchdog --diagnose
 ```
 
@@ -30,7 +34,15 @@ Requisitos: Python 3.10 o superior. Opcional: `python-keyring`, `ollama`.
 
 - Predeterminada: `config/defaults.json` (instalada en `/usr/share/nexora/config/`).
 - Usuario: `~/.config/nexora/user.json` (ver plantilla `config/user.example.json`). La configuración del usuario prevalece sobre la predeterminada.
-- Nunca guardes secretos en `user.json`: usa la bóveda (`nexora vault ...`).
+- Nunca guardes secretos en `user.json`: usa la bóveda.
+
+## Modos e intensidades
+
+```bash
+nexora modes                        # lista los cinco modos oficiales
+nexora mode gaming                  # política efectiva del modo
+nexora mode gaming --intensity 3    # fija la intensidad (1, 2, 3, full)
+```
 
 ## Motor IA
 
@@ -44,14 +56,15 @@ Solo se aceptan endpoints de loopback salvo `allow_remote=true` explícito. Nexo
 
 ## Seguridad
 
-- Auditoría defensiva de solo lectura: `nexora security audit`.
-- Informe explícito: `nexora security report ruta/informe.json` (permisos 600).
+- Auditoría defensiva de solo lectura: `nexora audit`.
 - Sin extracción de credenciales de navegadores, sin capacidades ofensivas, sin ejecución de comandos generados por modelos.
 
 ## Documentación
 
 - `docs/INSTALL.md` (instalación y desinstalación)
 - `docs/ARCHITECTURE.md` (arquitectura)
+- `docs/MODES.md` (modos oficiales e intensidades)
+- `docs/NKE.md` (Kernel Engine)
 - `docs/DEVELOPMENT.md` (desarrollo y pruebas)
 - `docs/DIAGNOSTICS.md` (diagnóstico y watchdog)
 - `docs/QA_REPORT.md` (informe de calidad)

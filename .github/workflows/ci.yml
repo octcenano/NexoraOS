@@ -235,26 +235,17 @@ jobs:
             echo '```'
           } > issue-body.md
           # Publicación vía API REST con curl: el contenedor archlinux:base no
-          # incluye gh, así que el diagnóstico no puede depender de él.
-          payload_file=issue-payload.json
-          python3 - "$GITHUB_RUN_NUMBER" <<'PYEOF' > "$payload_file" 2>/dev/null || \
-          printf '{"title":"CI: fallo de iso-build (run %s)","body":"(cuerpo no generado: python3 no disponible)"}\n' "$GITHUB_RUN_NUMBER"
-          PYEOF
-          if [ ! -s "$payload_file" ]; then
-            printf '{"title":"CI: fallo de iso-build (run %s)","body":"(cuerpo no generado)"}\n' "$GITHUB_RUN_NUMBER" > "$payload_file"
-          fi
-          # El cuerpo debe ser JSON válido con el contenido de issue-body.md:
-          # se construye con jq si está disponible; si no, con python3.
-          if command -v jq > /dev/null 2>&1; then
-            jq -n --rawfile body issue-body.md \
-              --arg title "CI: fallo de iso-build (run $GITHUB_RUN_NUMBER)" \
-              '{title: $title, body: $body}' > issue-payload.json
-          elif command -v python3 > /dev/null 2>&1; then
-            python3 -c "import json,sys; print(json.dumps({'title': 'CI: fallo de iso-build (run ' + sys.argv[1] + ')', 'body': open('issue-body.md').read()}))" "$GITHUB_RUN_NUMBER" > issue-payload.json
+          # incluye gh, así que el diagnóstico no puede depender de él. El
+          # cuerpo JSON se construye con python3 (presente tras el paso de
+          # dependencias; si pacman falló, se envía sin cuerpo detallado).
+          if python3 -c "import json" 2> /dev/null; then
+            python3 -c "import json,sys; print(json.dumps({'title': 'CI: fallo de iso-build (run ' + sys.argv[1] + ')', 'body': open('issue-body.md').read()}))" "${{ github.run_number }}" > issue-payload.json
+          else
+            printf '{"title":"CI: fallo de iso-build (run %s)","body":"(cuerpo no generado: python3 no disponible; ver anotaciones del job)"}\n' "${{ github.run_number }}" > issue-payload.json
           fi
           curl -sSf -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/octcenano/NexoraOS/issues \
-            -d @"$payload_file" > curl-result.json 2>&1 || \
+            -d @issue-payload.json > curl-result.json 2>&1 || \
             { echo "::error::No se pudo publicar el issue de diagnóstico:"; head -c 500 curl-result.json; }

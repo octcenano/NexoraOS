@@ -7,7 +7,9 @@ from nexora.watchdog import Component, Watchdog, watchdog_from_config
 
 class FakeClock:
     def __init__(self):
-        self.t = 0.0
+        # Arranca en un instante lejano para que el primer intento de
+        # recuperación no esté dentro del cooldown (como con time.monotonic real).
+        self.t = 100.0
 
     def __call__(self):
         return self.t

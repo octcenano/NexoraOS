@@ -29,7 +29,9 @@ cd "$ROOT"
 mkdir -p "$OUT"
 find "$OUT" -maxdepth 1 -name '*.iso' -print -delete
 find "$OUT" -maxdepth 1 -name '*.sha256' -delete
-find "$PROFILE/airootfs/root" -maxdepth 1 -name 'nexora_os-*.whl' -delete 2>/dev/null || true
+if [[ -d "$PROFILE/airootfs/root" ]]; then
+  find "$PROFILE/airootfs/root" -maxdepth 1 -name 'nexora_os-*.whl' -delete
+fi
 
 # --- build y tests ----------------------------------------------------------
 info "Compilando wheel de nexora-os..."

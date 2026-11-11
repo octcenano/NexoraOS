@@ -57,6 +57,7 @@ class NexoraDashboard:
     def widgets(self) -> dict:
         return {
             "mode_selector": list(self.registry.names()),
+            "active_intensity": self.registry.intensity(self.active_mode),
             "account_hub_status": self.hub.summary(),
             "active_agent": self.active_agent.name,
             "mode_status": self.registry.mode_status(self.active_mode),
@@ -72,6 +73,10 @@ class NexoraDashboard:
         self.active_mode = mode_name
         self._agent_for(mode_name)
         return True
+
+    def set_intensity(self, level: str) -> None:
+        """Fija la intensidad del modo activo (validada contra los niveles reales)."""
+        self.registry.set_intensity(self.active_mode, level)
 
     def ask(self, prompt: str) -> str:
         return self.active_agent.process_prompt(prompt)
@@ -106,6 +111,7 @@ class NexoraDashboard:
             "├─────────────────────────────────────────────",
             f"│ Estado       : {layout['system_status']}",
             f"│ Modo activo  : {layout['active_mode']} ({w['active_agent']}) · {status_label}",
+            f"│ Intensidad   : {w['active_intensity']}",
             f"│ Modos        : {modes}",
             f"│ Account Hub  : {w['account_hub_status']}",
             f"│ Motor IA     : {engine}",

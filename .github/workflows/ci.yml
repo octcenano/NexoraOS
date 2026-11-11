@@ -142,7 +142,27 @@ jobs:
             tail -n 20 validate.log | sed 's/^/::error::/'
           fi
           exit $status
+      - name: Publicar diagnóstico en un issue (los logs requieren sesión)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job package, commit ${{ github.sha }}."
+            echo "### build.log (tail)"
+            echo '```'
+            tail -n 60 build.log 2>/dev/null || echo "(build.log no existe)"
+            echo '```'
+            echo "### validate.log (tail)"
+            echo '```'
+            tail -n 40 validate.log 2>/dev/null || echo "(validate.log no existe)"
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo octcenano/NexoraOS \
+            --title "CI: fallo del job package (run ${{ github.run_number }})" \
+            --body-file issue-body.md
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: nexora-wheel
           path: dist/*.whl
@@ -194,7 +214,7 @@ jobs:
             sha256sum out/*.iso
           fi
           exit $status
-      - name: Publicar diagnóstico en un issue (los logs requieren sesión)
+      - name: Publicar diagnóstico en un issue vía API (gh no está en el contenedor)
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,15 +225,36 @@ jobs:
             echo '```'
             tail -n 60 pacman.log 2>/dev/null || echo "(pacman.log no existe)"
             echo '```'
+            echo "### build-iso.log (tail)"
+            echo '```'
+            tail -n 40 build-iso.log 2>/dev/null || echo "(build-iso.log no existe)"
+            echo '```'
             echo "### iso.log (tail)"
             echo '```'
             tail -n 80 iso.log 2>/dev/null || echo "(iso.log no existe)"
             echo '```'
           } > issue-body.md
-          if command -v gh > /dev/null 2>&1; then
-            gh issue create --repo octcenano/NexoraOS \
-              --title "CI: fallo de iso-build (run ${{ github.run_number }})" \
-              --body-file issue-body.md
-          else
-            echo "gh no disponible (pacman falló): diagnóstico publicado solo como anotaciones."
+          # Publicación vía API REST con curl: el contenedor archlinux:base no
+          # incluye gh, así que el diagnóstico no puede depender de él.
+          payload_file=issue-payload.json
+          python3 - "$GITHUB_RUN_NUMBER" <<'PYEOF' > "$payload_file" 2>/dev/null || \
+          printf '{"title":"CI: fallo de iso-build (run %s)","body":"(cuerpo no generado: python3 no disponible)"}\n' "$GITHUB_RUN_NUMBER"
+          PYEOF
+          if [ ! -s "$payload_file" ]; then
+            printf '{"title":"CI: fallo de iso-build (run %s)","body":"(cuerpo no generado)"}\n' "$GITHUB_RUN_NUMBER" > "$payload_file"
           fi
+          # El cuerpo debe ser JSON válido con el contenido de issue-body.md:
+          # se construye con jq si está disponible; si no, con python3.
+          if command -v jq > /dev/null 2>&1; then
+            jq -n --rawfile body issue-body.md \
+              --arg title "CI: fallo de iso-build (run $GITHUB_RUN_NUMBER)" \
+              '{title: $title, body: $body}' > issue-payload.json
+          elif command -v python3 > /dev/null 2>&1; then
+            python3 -c "import json,sys; print(json.dumps({'title': 'CI: fallo de iso-build (run ' + sys.argv[1] + ')', 'body': open('issue-body.md').read()}))" "$GITHUB_RUN_NUMBER" > issue-payload.json
+          fi
+          curl -sSf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/octcenano/NexoraOS/issues \
+            -d @"$payload_file" > curl-result.json 2>&1 || \
+            { echo "::error::No se pudo publicar el issue de diagnóstico:"; head -c 500 curl-result.json; }

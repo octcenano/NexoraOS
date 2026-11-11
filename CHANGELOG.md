@@ -1,5 +1,16 @@
 # Changelog
 
+## En desarrollo (Fase 5: modos oficiales, 2026-11-11)
+
+### Cinco modos oficiales con intensidades
+- `nexora/core/registry.py`: los modos oficiales son ahora gaming, hacking, office, stealth y forge, cada uno con niveles de intensidad 1, 2, 3 y full respaldados por las LevelPolicy reales del núcleo adaptativo (level1/level2/level3/full).
+- Creator deja de estar registrado como modo (no es un modo oficial). Meteorology y Security quedan como agentes especializados o funcionalidad transversal, no como modos principales.
+- CLI: nuevo comando `nexora mode <nombre> [--intensity 1|2|3|full]` que muestra y fija la política efectiva; `nexora modes` lista los cinco modos oficiales y los agentes especializados por separado.
+- Dashboard: widget de intensidad del modo activo y método `set_intensity` validado.
+- Configuración: `modes_enabled` actualizado a los cinco modos oficiales en `config/defaults.json` y en la copia empaquetada.
+- Tests nuevos: `tests/test_modes_official.py` (modos exactos, especialistas fuera del registro, validación de intensidades, mapeo a LevelPolicy reales, coordinador, política de hacking sin autonomía ofensiva). Tests de CLI, dashboard y core actualizados.
+- Corregido `packaging/archiso/profiledef.sh`: el bloque INI inválido `[build] options=()` se sustituye por `buildmodes=('iso')` (profiledef.sh se ejecuta como Bash).
+
 ## En desarrollo (Nexora Kernel Engine, 2026-11-11)
 
 ### NKE — Nexora Kernel Engine (nuevo)

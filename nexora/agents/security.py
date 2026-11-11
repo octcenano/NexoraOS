@@ -2,35 +2,51 @@
 
 Alcance deliberado: diagnóstico y auditoría en sistemas autorizados. No hay
 escaneo de red, no hay explotación, no hay automatizaciones de intrusión.
-Todas las comprobaciones leen estado local y no modifican nada.
+Todas las comprobaciones leen estado local y no modifican nada. La única
+escritura posible es un informe explícito solicitado por el usuario
+(``write_report``), en la ruta que el usuario indique.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import stat
+import tempfile
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from nexora.agents.base import BaseAgent
 
 
-def _listening_socket_count() -> Optional[int]:
-    """Cuenta sockets en escucha (IPv4/IPv6) leyendo /proc. None si no hay datos."""
-    count = 0
+def _listening_sockets() -> Optional[List[Tuple[str, int]]]:
+    """Inventario de sockets en escucha (IPv4/IPv6) leyendo /proc. None si no hay datos."""
+    sockets: List[Tuple[str, int]] = []
     found_any = False
-    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+    for path, family in (("/proc/net/tcp", "tcp"), ("/proc/net/tcp6", "tcp6")):
         try:
             with open(path, encoding="ascii") as fh:
                 next(fh)  # cabecera
                 for line in fh:
                     parts = line.split()
                     if len(parts) > 3 and parts[3] == "0A":  # TCP_LISTEN
-                        count += 1
+                        port = int(parts[1].split(":")[1], 16)
+                        sockets.append((family, port))
                         found_any = True
-        except OSError:
+        except (OSError, ValueError):
             continue
-    return count if found_any else None
+    return sorted(set(sockets)) if found_any else None
+
+
+def _pacman_sync_age_days() -> Optional[float]:
+    """Días desde la última sincronización de pacman (solo lectura)."""
+    db = Path("/var/lib/pacman/sync/core.db")
+    try:
+        mtime = os.stat(db).st_mtime
+    except OSError:
+        return None
+    return round((time.time() - mtime) / 86400, 1)
 
 
 def _config_file_permissions() -> Optional[str]:
@@ -98,12 +114,24 @@ def run_defensive_audit(cfg: Optional[dict] = None) -> Dict[str, Any]:
         checks.append({"name": "user_config_permissions", "status": "warn",
                        "detail": f"permisos {perms}; se recomienda 600 (chmod 600)"})
 
-    sockets = _listening_socket_count()
+    sockets = _listening_sockets()
     if sockets is None:
         checks.append({"name": "listening_sockets", "status": "warn", "detail": "no disponible en este sistema"})
     else:
+        detail = ", ".join(f"{f}:{p}" for f, p in sockets) or "ninguno"
         checks.append({"name": "listening_sockets", "status": "ok",
-                       "detail": f"{sockets} socket(s) en escucha (informativo, revísalos tú)"})
+                       "detail": f"{len(sockets)} socket(s) en escucha [{detail}] (informativo)"})
+
+    age = _pacman_sync_age_days()
+    if age is None:
+        checks.append({"name": "updates", "status": "warn",
+                       "detail": "no se pudo leer /var/lib/pacman/sync (¿no es Arch o sin permisos?)"})
+    elif age > 14:
+        checks.append({"name": "updates", "status": "warn",
+                       "detail": f"última sincronización de pacman hace {age} días; ejecuta 'sudo pacman -Syu'"})
+    else:
+        checks.append({"name": "updates", "status": "ok",
+                       "detail": f"última sincronización de pacman hace {age} días"})
 
     nexora_dirs = [Path.home() / ".config" / "nexora"]
     ww = _world_writable_in(nexora_dirs)
@@ -112,7 +140,43 @@ def run_defensive_audit(cfg: Optional[dict] = None) -> Dict[str, Any]:
 
     overall = "fail" if any(c["status"] == "fail" for c in checks) else \
               "warn" if any(c["status"] == "warn" for c in checks) else "ok"
-    return {"overall": overall, "checks": checks, "scope": "read_only_defensive"}
+
+    recommendations: List[str] = []
+    for c in checks:
+        if c["status"] == "fail":
+            recommendations.append(f"[{c['name']}] {c['detail']} — corrígelo antes de continuar.")
+        elif c["status"] == "warn":
+            recommendations.append(f"[{c['name']}] {c['detail']}")
+
+    return {"overall": overall, "checks": checks, "recommendations": recommendations,
+            "scope": "read_only_defensive"}
+
+
+def write_report(report: Dict[str, Any], path: Path) -> Path:
+    """Escribe el informe de auditoría en la ruta indicada por el usuario.
+
+    Única escritura del agente Security: explícita, atómica y con permisos 600.
+    Nunca se ejecuta automáticamente.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
+    payload = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=".audit-", suffix=".json.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, target)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return target
 
 
 class SecurityAgent(BaseAgent):
@@ -135,6 +199,6 @@ class SecurityAgent(BaseAgent):
 
     def describe(self) -> dict:
         info = super().describe()
-        info["tools"] = ["defensive_audit_readonly"]
+        info["tools"] = ["defensive_audit_readonly", "write_report_explicit"]
         info["offensive_capabilities"] = False
         return info

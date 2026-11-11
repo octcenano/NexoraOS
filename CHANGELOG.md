@@ -1,43 +1,43 @@
 # Changelog
 
+## 0.4.0-beta (2026-11-11)
+
+### Watchdog
+- Nuevo modo diagnóstico `--diagnose` (y `--json`): informe sin efectos secundarios con recomendaciones, historial de incidencias y contadores de reinicio.
+- Historial de incidencias acotado (transiciones sano -> degradado por componente).
+- Protección anti-bucle en modo bucle: los errores internos no derriban el proceso, pero N pasadas consecutivas con error provocan una salida controlada (código 3) para que systemd aplique su propia política de reinicio.
+- Unidades systemd con límites de recursos (MemoryMax=150M, CPUQuota=5%) y endurecimiento (NoNewPrivileges, ProtectSystem=strict, ProtectKernelTunables, ProtectControlGroups).
+
+### Motor IA local
+- `list_models()`: lista modelos reales del backend (Ollama `/api/tags`, OpenAI-compatible `/v1/models`); el mock lista solo su modelo simulado.
+- `has_model(model)`: comprueba disponibilidad sin descargar nada.
+- `select_model(model)`: selección de modelo por usuario.
+- `detect_backends()`: sondeo solo de endpoints de loopback por defecto; devuelve disponibilidad, endpoint y modelos por backend.
+- Errores de conexión y respuestas inesperadas devuelven `status: error` en lugar de lanzar excepciones.
+
+### Agente Security
+- Inventario de sockets en escucha (familia y puerto, desde /proc) en lugar de un simple conteo.
+- Comprobación de antigüedad de la sincronización de pacman (aviso si supera 14 días).
+- Campo `recommendations` en el informe de auditoría.
+- `write_report(report, path)`: única escritura del agente, explícita, atómica y con permisos 600.
+
+### Build y packaging
+- `scripts/build-iso.sh`: elimina ISOs y wheels antiguos antes de compilar, falla si `dist/` tiene más de un wheel, verifica que la ISO generada es única y válida (sha256, file, El Torito cuando isoinfo está disponible).
+- Comprobaciones previas: python, python-build, archivos obligatorios del perfil archiso.
+- PKGBUILD: pkgver 0.4.0. Perfil archiso: iso_version 0.4.0.
+
+### CI
+- Gitleaks fijado a la versión v8.21.2 (binario oficial) en lugar de una acción flotante.
+- ShellCheck vía apt (versión gestionada por Ubuntu) con tolerancia a ausencia de scripts.
+- Job experimental de construcción de ISO en contenedor archlinux:base (continue-on-error: no bloquea CI verde).
+
+### Tests
+- Tests nuevos y actualizados: watchdog (cooldown, agotamiento, incidencias, diagnóstico), motor IA (select_model, has_model, list_models, detect_backends, backend caído, respuesta inesperada), agente Security (inventario de puertos, recomendaciones, informe atómico 600).
+
 ## 0.3.0-beta
 
-### Añadido
-- `nexora.watchdog`: supervisión ligera del core (`nexora status`, `nexora-watchdog --loop` para systemd). Comprobaciones reales (config, aislamiento, vault), recuperación acotada (`max_restarts`, cooldown), registro de eventos acotado y salida JSON. Unidades systemd de sistema y usuario opcionales (`packaging/systemd/`), no habilitadas automáticamente.
-- Modo Security real: `nexora.agents.security.SecurityAgent` y `nexora audit` — auditoría defensiva de **solo lectura** (configuración, vault, permisos de user.json, sockets en escucha vía /proc, ficheros escribibles por otros). Sin capacidades ofensivas.
-- `nexora.core.permissions.ToolPolicy`: herramientas permitidas por modo; operaciones sensibles (red externa, ejecutar comandos, escribir fuera del proyecto, memoria de otro agente) exigen aprobación explícita (`ApprovalRequiredError`).
-- `LocalAIEngine.list_models()`: detección de modelos en Ollama (`/api/tags`) y backends compatibles con OpenAI (`/v1/models`), con etiquetado simulado y errores controlados.
-- Detección de GPU (`/sys/class/drm`) y almacenamiento libre (`statvfs`) en `core.profiles`; `nexora profile` los muestra.
-- `core.config`: rechazo de claves de primer nivel desconocidas, validación de tipos de contenedores y `write_user_config()` (valida antes de escribir, directorio 700, archivo 600, escritura atómica con fsync).
-- CLI: comandos `status` y `audit`; `modes` muestra el estado real de cada modo (stub/basic); mensajes de error consistentes.
-- Tests nuevos: watchdog (9), security (4), tool policy (5), config extendida (7), `list_models` (4), perfiles/hardware extendidos (12) y casos de error (config corrupta, backend caído, permisos insuficientes).
-- CI ampliada: Python 3.10 y 3.12, `compileall`, `pip check`, instalación limpia del wheel y arranque desde `/tmp`, ShellCheck, `bash -n` y gitleaks.
+- Rama de recuperación `beta-0.3-recovery`, endurecimiento del vault, permisos por herramienta, dashboard de modos, CLI ampliada, perfil archiso y PKGBUILD iniciales, workflow CI.
 
-### Corregido
-- El perfil archiso no era válido (secciones `[initcpio]`/`[efi]` inventadas, faltaban `pacman.conf`, `arch`, `airootfs_image_type` y `file_permissions` coherentes): reescrito según el formato actual de archiso.
-- `scripts/build-iso.sh` asumía todo instalado y no verificaba nada: ahora comprueba requisitos, valida el perfil, verifica la ISO resultante (sha256, `file`, isoinfo) y explica cada error.
-- `PKGBUILD` usaba un tarball por tag con `sha256sums=('SKIP')` y un nombre de directorio frágil (`NexoraOS-$pkgver`): ahora usa fuente git fijada por tag (`#tag=v$pkgver`), que es verificable por SHA de commit, e instala las unidades systemd.
-- `nexora profile` imprimía valores fijos si fallaba la detección: mantiene el fallback seguro pero ahora también detecta GPU y almacenamiento.
+## 0.2.0-beta
 
-### Pendiente (honesto)
-- ISO no generada ni verificada en este entorno (sin mkarchiso ni red de paquetes).
-- Tests no ejecutados localmente (sin intérprete Python disponible); los ejecuta CI en 3.10 y 3.12.
-- OAuth real, GUI, sandbox de procesos, Open-Meteo en vivo y `keyring` real siguen pendientes.
-
-## 0.2.0-beta (revisado)
-
-Corrige el paquete anterior, cuyo código no coincidía con el documento de traspaso y cuya suite de tests no arrancaba.
-
-### Corregido
-- Los tests importaban `ModeRegistry`, `calculate_hybrid_profile` y `BaseAgent`, que no existían; `AccountHub` y `BrowserConnector` tenían otra API distinta a la usada por los tests. Ahora existen y los 9 tests originales pasan sin modificarse.
-- `MeteorologyAgent` importaba una clase inexistente y devolvía datos fijos presentados como "observación verificada". Ahora los datos simulados se etiquetan `simulated: True` y existe un proveedor real (Open-Meteo, opt-in).
-- `LocalAIEngine` afirmaba soportar Ollama/llama.cpp/LocalAI pero solo devolvía texto simulado, y `is_connected` era siempre `True`. Ahora implementa los tres backends.
-- `SecureVault` era un diccionario sin política ni validación; ahora tiene backends explícitos y no filtra valores en `repr`.
-- La CLI usaba funciones que no existían y valores fijos (4 núcleos, 8 GB); ahora detecta el hardware.
-- `defaults.json` y `pyproject.toml` seguían en 0.1; ahora la versión sale de `nexora.__version__`.
-- Faltaban `__init__.py` en 4 subpaquetes; el zip tenía una carpeta duplicada anidada.
-- `diagnostics.health` devolvía estados fijos; ahora hace comprobaciones reales (aislamiento, config, vault, motor IA, navegadores).
-
-### Añadido
-- `core.config` (carga y validación; rechaza secretos), `AgentMessage` y `share_with` con aprobación explícita, estados y permisos reales en el Account Hub, comandos CLI `health`, `weather`, `ask`, opciones `dashboard --mode/--json`, 66 tests nuevos.
-- `IsolatedAgent` se sustituye por `BaseAgent` (con memoria `remember/recall`).
+- Prototipo inicial: CLI, agentes base y meteorología, connectors de cuenta y navegador, core (config, permissions, profiles, registry, vault), diagnóstico de salud, dashboard de texto.

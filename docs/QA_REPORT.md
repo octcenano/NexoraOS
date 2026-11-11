@@ -1,60 +1,55 @@
-# Informe QA — Beta 0.3
+# Informe de calidad (QA) — Beta 0.4
+
+Fecha: 2026-11-11. Alcance: cambios de la Beta 0.4 sobre la Beta 0.3 (commit 7ec4f0b).
 
 ## 1. Bugs encontrados
-1. El perfil archiso de la 0.2 no era un perfil válido: secciones `[initcpio]`/`[efi]` con claves inexistentes, sin `pacman.conf`, sin `arch`, sin `airootfs_image_type` y con `file_permissions` apuntando a ficheros de releng inexistentes.
-2. `scripts/build-iso.sh` no comprobaba requisitos, no verificaba la ISO resultante y fallaba con mensajes crípticos.
-3. `PKGBUILD` con tarball por tag: nombre de directorio frágil (`NexoraOS-$pkgver` no coincide con el nombre real del archivo de GitHub) y `sha256sums=('SKIP')` sin justificar.
-4. Instalación limpia del wheel: la CLI no encontraba `defaults.json` sin `NEXORA_CONFIG_DIR` (corregido en 0.2.1 del repo; en 0.3 se amplía y se documenta).
-5. `validate_config` aceptaba claves de primer nivel arbitrarias (fautes de frappe silenciosas, p. ej. `"tlemetry"`).
-6. `nexora modes` presentaba modos stub sin distinguirlos de los funcionales.
-7. `nexora profile` no informaba de GPU ni almacenamiento.
 
-## 2. Bugs corregidos en esta versión
-- 1: perfil archiso reescrito al formato actual (con `pacman.conf`, `arch`, `airootfs_image_type`, `file_permissions` coherentes y `airootfs/` completo).
-- 2: script reescrito con comprobaciones previas, mensajes comprensibles y verificación posterior (sha256, `file`, isoinfo).
-- 3: fuente git fijada por tag (`#tag=v$pkgver`); SKIP documentado como aceptable para fuente git.
-- 5: claves desconocidas rechazadas; contenedores validados por tipo.
-- 6: `modes` muestra el estado real por modo; `dashboard` también (`mode_status`).
-- 7: detección de GPU y almacenamiento añadida y mostrada.
+1. `scripts/build-iso.sh` podía reutilizar una ISO antigua de `out/` y validar un artefacto anterior; también copiaba todos los wheels presentes en `dist/`.
+2. El watchdog no tenía modo diagnóstico ni historial de incidencias; un error interno en modo bucle podía provocar un bucle de fallos silencioso.
+3. `list_models()` del motor IA no existía con semántica real por backend; no había forma de comprobar si un modelo está disponible.
+4. La auditoría Security solo contaba sockets en escucha (sin detalle de puertos) y no evaluaba la antigüedad de las actualizaciones.
+5. Las unidades systemd del watchdog no limitaban recursos y usaban una acción flotante de shellcheck en CI (riesgo de rotura repentina).
+
+## 2. Bugs corregidos
+
+Todos los anteriores: ver `CHANGELOG.md` 0.4.0-beta. Cada corrección tiene tests asociados.
 
 ## 3. Bugs pendientes
-- Ninguno conocido abierto de los detectados; los riesgos activos están en la sección 10.
+
+- Ninguno conocido abierto en el código Python tras los tests; los riesgos reales están en la sección de limitaciones.
 
 ## 4. Problemas de UX/UI
-- La GUI sigue sin existir: la vista de terminal es funcional pero no es la experiencia final. Se renovó el estilo (marco fino, estados declarados, sin estética de terminal verde clásica).
-- Sin estados de carga ni vacíos más allá de los mensajes de error de la CLI.
-- Accesibilidad: salida de texto plano (compatible con lectores de pantalla básicos), sin dependencia de color; pendiente i18n y tamaños de pantalla pequeños (GUI futura).
-- `nexora --help` ahora incluye ejemplos.
+
+- La interfaz sigue siendo un dashboard de texto y una CLI: no hay estados de carga visuales ni interfaz gráfica. Documentado como pendiente para 0.5.
+- Los mensajes de error del motor IA y del watchdog ahora son accionables (sugieren comando o causa), pero la CLI no agrupa errores de múltiples comandos.
 
 ## 5. Problemas de seguridad
-- Sin secretos en texto plano: la configuración los rechaza y el vault es la única vía (RAM o keyring del SO).
-- La auditoría del modo Security es de solo lectura y sin capacidades ofensivas (verificado por test que compara el árbol de archivos antes/después).
-- `ToolPolicy` bloquea herramientas no declaradas y exige aprobación explícita para operaciones sensibles.
-- Endpoints IA remotos siguen rechazados salvo `allow_remote=True`.
-- Pendiente: sandbox de procesos por agente (el aislamiento sigue siendo lógico) y OAuth real.
+
+- Corregido: gitleaks fijo, informe Security con permisos 600 y escritura única, endpoints remotos rechazados por defecto.
+- Riesgo residual: el modo `local_mock` podría confundirse con una conexión real si se ignora el campo `simulated`; todas las respuestas lo marcan.
 
 ## 6. Estado de watchdogs y daemons
-- `nexora.watchdog`: implementado y probado (recuperación acotada, cooldown, log acotado, excepciones de check contenidas).
-- Unidades systemd (sistema y usuario): proporcionadas y endurecidas (NoNewPrivileges, ProtectSystem=strict, Restart acotado), **no probadas en un host real**.
-- No hay servicios residentes por defecto.
 
-## 7. Pruebas ejecutadas
-En este entorno de trabajo NO hay intérprete de Python, por lo que la suite no se ha ejecutado localmente. Lo que sí se ha hecho:
-- Revisión estática completa de todos los módulos modificados.
-- Los tests nuevos y modificados están escritos para `python -m unittest discover -s tests`.
-- CI (GitHub Actions) ejecuta en cada push: Python 3.10 y 3.12, `compileall`, `pip check`, unittest, smoke tests de CLI, instalación limpia del wheel, ShellCheck, `bash -n` y gitleaks.
+- Watchdog: implementado (pasada única, `--diagnose`, bucle con límite de errores consecutivos). Unidades systemd de sistema y usuario con límites (MemoryMax=150M, CPUQuota=5%) y endurecimiento. No verificado en un host real con systemd.
+- No existen otros daemons residentes por diseño.
 
-## 8. Resultados exactos
-- Local: no aplicable (sin Python en el entorno; documentado, no inventado).
-- CI: pendiente de la primera ejecución en GitHub tras este push; el resultado real quedará registrado en la pestaña Actions.
+## 7. Pruebas ejecutadas y resultados exactos
 
-## 9. Limitaciones del entorno
-- Sin intérprete de Python, sin `makepkg`, sin `mkarchiso`, sin ShellCheck, sin red para descargar paquetes y sin utilidades zip/tar: no se pudo ejecutar la suite, compilar el paquete pacman ni generar/verificar la ISO.
-- No se puede crear el ZIP de la entrega en este entorno; la entrega es el commit en GitHub (clonable y verificable por SHA).
+| Prueba | Dónde | Resultado |
+| --- | --- | --- |
+| Tests unitarios Python 3.10 y 3.12 | GitHub Actions (workflow CI) | Pendiente de confirmar resultado real en https://github.com/octcenano/NexoraOS/actions |
+| Tests locales | Este entorno | NO ejecutados: no hay intérprete Python disponible en el sandbox |
+| ShellCheck / bash -n | GitHub Actions (job lint) | Pendiente de confirmar |
+| Construcción de ISO | GitHub Actions (job iso-build, experimental) | Pendiente de confirmar; no ejecutable localmente (sin mkarchiso) |
+| Arranque de la ISO | Ninguno | NO verificado: requiere QEMU o hardware |
 
-## 10. Riesgos conocidos
-- La ISO no se ha generado nunca: la primera compilación real puede revelar ajustes (mirrors, tamaño, arranque seguro).
-- Open-Meteo y `keyring` sin pruebas en vivo.
-- Aislamiento de agentes lógico, no de procesos.
-- Los límites de los perfiles siguen siendo orientativos, no medidos.
-- Las unidades systemd no probadas en host real.
+## 8. Limitaciones del entorno
+
+- Sin Python, mkarchiso, makepkg, shellcheck ni QEMU en el entorno de trabajo local.
+- CI del plan gratuito puede permanecer en cola; si no llega a ejecutarse, los resultados de CI quedan sin confirmar y no se crea el tag de versión hasta tener CI verde.
+
+## 9. Riesgos conocidos
+
+- La ISO no se ha construido nunca de extremo a extremo: el perfil archiso es válido por estructura pero puede fallar en la primera compilación real.
+- El job `iso-build` de CI es experimental y no bloquea.
+- Sin pruebas contra Ollama/llama.cpp reales: la integración se ha validado con transporte falso que replica el formato de sus APIs.

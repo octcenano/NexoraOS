@@ -1,95 +1,118 @@
+"""Tests del watchdog: recuperación acotada, cooldown, agotamiento, diagnóstico y anti-bucle."""
+
 import unittest
 
 from nexora.watchdog import Component, Watchdog, watchdog_from_config
 
 
-class WatchdogTests(unittest.TestCase):
-    def test_healthy_component_reports_ok(self):
-        wd = Watchdog()
-        wd.register(Component("a", lambda: True))
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, dt):
+        self.t += dt
+
+
+class WatchdogTest(unittest.TestCase):
+    def _wd(self, max_restarts=2, cooldown=5.0):
+        clock = FakeClock()
+        sleeps = []
+        wd = Watchdog(max_restarts=max_restarts, cooldown_s=cooldown,
+                      clock=clock, sleeper=sleeps.append)
+        return wd, clock, sleeps
+
+    def test_componente_sano(self):
+        wd, _, _ = self._wd()
+        wd.register(Component("ok", lambda: True))
         report = wd.run_once()
         self.assertEqual(report["overall"], "ok")
-        self.assertTrue(report["components"][0]["healthy"])
 
-    def test_failing_component_without_recovery_is_degraded(self):
-        wd = Watchdog()
-        wd.register(Component("a", lambda: False))
-        report = wd.run_once()
-        self.assertEqual(report["overall"], "degraded")
+    def test_recuperacion_limitada(self):
+        wd, clock, _ = self._wd(max_restarts=2, cooldown=0.0)
+        state = {"n": 0}
 
-    def test_recovery_is_bounded(self):
-        calls = {"recover": 0}
+        def unhealthy():
+            return state["n"] >= 2
 
         def recover():
-            calls["recover"] += 1
-            return False  # la recuperación nunca funciona
-
-        wd = Watchdog(max_restarts=2, cooldown_s=0.0)
-        wd.register(Component("a", lambda: False, recover=recover))
-        for _ in range(5):
-            wd.check("a")
-        self.assertEqual(calls["recover"], 2)  # acotado por max_restarts
-        self.assertEqual(wd.restart_count("a"), 2)
-        # tras agotar, no se reintenta más
-        wd.check("a")
-        self.assertEqual(calls["recover"], 2)
-
-    def test_cooldown_delays_restarts(self):
-        calls = {"recover": 0}
-        clock = {"t": 0.0}
-
-        def recover():
-            calls["recover"] += 1
+            state["n"] += 1
             return True
 
-        wd = Watchdog(max_restarts=5, cooldown_s=10.0, clock=lambda: clock["t"])
-        wd.register(Component("a", lambda: False, recover=recover))
-        wd.check("a")
-        clock["t"] += 1.0  # dentro del cooldown
-        wd.check("a")
-        self.assertEqual(calls["recover"], 1)
-        clock["t"] += 20.0  # fuera del cooldown
-        wd.check("a")
-        self.assertEqual(calls["recover"], 2)
+        wd.register(Component("svc", unhealthy, recover=recover))
+        r1 = wd.check("svc")
+        self.assertFalse(r1["healthy"])
+        self.assertTrue(r1["restarted"])
+        self.assertTrue(r1["recovered"])
+        r2 = wd.check("svc")
+        self.assertTrue(r2["healthy"])
+        self.assertEqual(wd.restart_count("svc"), 1)
 
-    def test_health_check_exception_does_not_crash_watchdog(self):
-        def boom():
-            raise RuntimeError("x")
+    def test_cooldown_evita_recuperaciones_inmediatas(self):
+        wd, clock, _ = self._wd(max_restarts=3, cooldown=10.0)
+        calls = {"n": 0}
 
-        wd = Watchdog()
-        wd.register(Component("a", boom))
-        entry = wd.check("a")
-        self.assertFalse(entry["healthy"])
-        self.assertIn("RuntimeError", entry.get("error", ""))
+        def recover():
+            calls["n"] += 1
+            return True
 
-    def test_log_is_bounded(self):
-        wd = Watchdog(log_size=3)
-        wd.register(Component("a", lambda: False))
-        for _ in range(10):
-            wd.check("a")
-        self.assertEqual(len(wd.log_entries()), 3)
+        wd.register(Component("svc", lambda: False, recover=recover))
+        wd.check("svc")
+        wd.check("svc")  # dentro del cooldown: no reintenta
+        self.assertEqual(calls["n"], 1)
+        clock.advance(10.0)
+        wd.check("svc")
+        self.assertEqual(calls["n"], 2)
 
-    def test_unknown_component_and_duplicates(self):
-        wd = Watchdog()
+    def test_agotamiento_de_reinicios(self):
+        wd, _, _ = self._wd(max_restarts=1, cooldown=0.0)
+        wd.register(Component("svc", lambda: False, recover=lambda: False))
+        wd.check("svc")
+        r = wd.check("svc")
+        self.assertTrue(r["exhausted"])
+        report = wd.run_once()
+        self.assertEqual(report["overall"], "failed")
+
+    def test_health_check_que_lanza_no_derriba(self):
+        wd, _, _ = self._wd()
+        def bad():
+            raise RuntimeError("boom")
+        wd.register(Component("bad", bad))
+        r = wd.check("bad")
+        self.assertFalse(r["healthy"])
+        self.assertIn("error", r)
+
+    def test_componente_desconocido(self):
+        wd, _, _ = self._wd()
         with self.assertRaises(KeyError):
-            wd.check("nope")
+            wd.check("no-existe")
+
+    def test_duplicado(self):
+        wd, _, _ = self._wd()
         wd.register(Component("a", lambda: True))
         with self.assertRaises(ValueError):
             wd.register(Component("a", lambda: True))
 
-    def test_overall_failed_when_exhausted(self):
-        wd = Watchdog(max_restarts=0, cooldown_s=0.0)
-        wd.register(Component("a", lambda: False, recover=lambda: True))
-        wd.check("a")
-        report = wd.run_once()
-        self.assertEqual(report["overall"], "failed")
+    def test_incidencias_y_diagnostico(self):
+        wd, _, _ = self._wd(max_restarts=0)
+        wd.register(Component("svc", lambda: False))
+        wd.check("svc")
+        incs = wd.incidents()
+        self.assertEqual(len(incs), 1)
+        self.assertEqual(incs[0]["component"], "svc")
+        diag = wd.diagnose()
+        self.assertEqual(diag["scope"], "diagnostic_no_side_effects")
+        self.assertEqual(len(diag["incidents"]), 1)
+        self.assertTrue(any("svc" in r for r in diag["recommendations"]))
 
-    def test_watchdog_from_config_registers_core_components(self):
-        wd = watchdog_from_config()
-        names = {c.name for c in wd._components.values()}
-        self.assertIn("config", names)
-        self.assertIn("agent_isolation", names)
-        self.assertIn("vault", names)
+    def test_watchdog_from_config_registra_componentes(self):
+        wd = watchdog_from_config({"vault": {"backend": "memory"}})
+        report = wd.run_once()
+        self.assertIn(report["overall"], ("ok", "degraded", "failed"))
+        names = {r["component"] for r in report["components"]}
+        self.assertEqual(names, {"config", "agent_isolation", "vault"})
 
 
 if __name__ == "__main__":

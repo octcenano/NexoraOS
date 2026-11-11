@@ -2,10 +2,10 @@
 # Referencia: /usr/share/archiso/configs/releng/profiledef.sh
 output="out"
 iso_name="nexora-os"
-iso_label="NEXORA_OS_BETA_0_3"
+iso_label="NEXORA_OS_BETA_0_4"
 iso_publisher="NEXORA OS Project <https://github.com/octcenano/NexoraOS>"
 iso_application="NEXORA OS Beta Live"
-iso_version="0.3.0"
+iso_version="0.4.0"
 install_dir="nexora"
 bootmodes=('bios.syslinux' 'uefi.systemd')
 arch="x86_64"

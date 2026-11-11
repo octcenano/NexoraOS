@@ -7,10 +7,8 @@ Backends:
 
 Privacidad: por defecto solo se aceptan endpoints de loopback (127.0.0.0/8, ::1,
 localhost). Un endpoint remoto exige ``allow_remote=True`` de forma explícita.
-No se registran prompts ni respuestas.
-
-Cancelación: toda petición usa ``timeout`` (socket y lectura); no hay hilos
-residuales ni descargas automáticas de modelos.
+No se registran prompts ni respuestas, no se descargan modelos y toda petición
+usa ``timeout`` (sin hilos residuales).
 """
 
 from __future__ import annotations
@@ -58,6 +56,20 @@ def _http_json(method: str, url: str, payload: Optional[dict], timeout: float) -
         raise EngineConnectionError(str(exc)) from exc
 
 
+def _parse_model_names(backend: str, raw: Any) -> List[str]:
+    """Extrae nombres de modelos de la respuesta de un backend."""
+    names: List[str] = []
+    if isinstance(raw, dict):
+        items = raw.get("models") if backend == "ollama" else raw.get("data")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    name = item.get("name") if backend == "ollama" else item.get("id")
+                    if isinstance(name, str) and name:
+                        names.append(name)
+    return names
+
+
 class LocalAIEngine:
     def __init__(
         self,
@@ -103,6 +115,12 @@ class LocalAIEngine:
             self._reachable = False
         return self._reachable
 
+    def select_model(self, model: str) -> None:
+        """Selecciona el modelo a usar. No descarga nada: debe existir en el backend."""
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("El nombre del modelo no puede estar vacío")
+        self.model = model.strip()
+
     def list_models(self) -> Dict[str, Any]:
         """Modelos disponibles en el backend. Mock: solo el modelo simulado."""
         if self.simulated:
@@ -113,17 +131,20 @@ class LocalAIEngine:
         except EngineConnectionError as exc:
             self._reachable = False
             return {"status": "error", "message": f"Backend no disponible: {exc}", "backend": self.backend}
-        names: List[str] = []
-        if isinstance(raw, dict):
-            items = raw.get("models") if self.backend == "ollama" else raw.get("data")
-            if isinstance(items, list):
-                for item in items:
-                    if isinstance(item, dict):
-                        name = item.get("name") if self.backend == "ollama" else item.get("id")
-                        if isinstance(name, str) and name:
-                            names.append(name)
         self._reachable = True
-        return {"status": "success", "models": names, "backend": self.backend, "simulated": False}
+        return {
+            "status": "success",
+            "models": _parse_model_names(self.backend, raw),
+            "backend": self.backend,
+            "simulated": False,
+        }
+
+    def has_model(self, model: Optional[str] = None) -> bool:
+        """Comprueba si un modelo está disponible en el backend (sin descargarlo)."""
+        res = self.list_models()
+        if res["status"] != "success":
+            return False
+        return (model or self.model) in res["models"]
 
     def query(self, prompt: str, system_context: Optional[str] = None) -> Dict[str, Any]:
         """Inferencia en el ámbito del agente que llama. Nunca lanza por fallos de red."""
@@ -166,6 +187,33 @@ class LocalAIEngine:
 
         self._reachable = True
         return {"status": "success", "model": self.model, "backend": self.backend, "simulated": False, "output": text}
+
+
+def detect_backends(
+    timeout: float = 2.0,
+    transport: Optional[Callable[[str, str, Optional[dict], float], dict]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Sondea los backends reales en sus endpoints de loopback por defecto.
+
+    Solo consulta 127.0.0.1/localhost: no envía datos personales a ningún
+    servicio remoto. Devuelve, por backend, disponibilidad, endpoint y modelos.
+    """
+    transport = transport or _http_json
+    results: Dict[str, Dict[str, Any]] = {}
+    for backend, endpoint in BACKENDS.items():
+        if backend == "local_mock" or endpoint is None:
+            continue
+        path = "/api/tags" if backend == "ollama" else "/v1/models"
+        try:
+            raw = transport("GET", endpoint.rstrip("/") + path, None, timeout)
+            results[backend] = {
+                "available": True,
+                "endpoint": endpoint,
+                "models": _parse_model_names(backend, raw),
+            }
+        except EngineConnectionError:
+            results[backend] = {"available": False, "endpoint": endpoint, "models": []}
+    return results
 
 
 def engine_from_config(cfg: dict) -> LocalAIEngine:

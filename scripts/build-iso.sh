@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="$ROOT/packaging/archiso"
+OUT="$ROOT/out"
 SKIP_TESTS=false
 [[ "${1:-}" == "--skip-tests" ]] && SKIP_TESTS=true
 
@@ -21,10 +22,27 @@ python -m build --version >/dev/null 2>&1 || fail "falta 'python -m build' (pacm
 
 cd "$ROOT"
 
+# --- artefactos antiguos ----------------------------------------------------
+# Evita reutilizar ISOs y wheels antiguos: se eliminan antes de compilar.
+mkdir -p "$OUT"
+OLD_ISOS="$(find "$OUT" -maxdepth 1 -name '*.iso' 2>/dev/null || true)"
+if [[ -n "$OLD_ISOS" ]]; then
+  info "Eliminando ISO(s) antigua(s) en out/ para que el artefacto validado sea solo el nuevo:"
+  rm -fv "$OUT"/*.iso "$OUT"/*.sha256
+fi
+rm -fv "$PROFILE/airootfs/root/"nexora_os-*.whl 2>/dev/null || true
+
 # --- build y tests ----------------------------------------------------------
 info "Compilando wheel de nexora-os..."
 python -m build --wheel --no-isolation
-ls dist/*.whl >/dev/null 2>&1 || fail "no se generó ningún wheel en dist/."
+WHEELS="$(ls dist/*.whl 2>/dev/null || true)"
+[[ -n "$WHEELS" ]] || fail "no se generó ningún wheel en dist/."
+# Solo el wheel recién generado debe ir a la ISO: limpia dist de wheels viejos.
+WHEEL_COUNT="$(printf '%s\n' $WHEELS | wc -l)"
+if [[ "$WHEEL_COUNT" -gt 1 ]]; then
+  fail "dist/ contiene varios wheels ($WHEEL_COUNT); elimina los antiguos para no empaquetar artefactos dudosos."
+fi
+info "Wheel generado: $WHEELS"
 
 if [[ "$SKIP_TESTS" == false ]]; then
   info "Ejecutando tests..."
@@ -43,16 +61,18 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 info "Copiando wheel al perfil archiso..."
-mkdir -p "$PROFILE/airootfs/root" out
-cp dist/*.whl "$PROFILE/airootfs/root/"
+mkdir -p "$PROFILE/airootfs/root"
+cp "$WHEELS" "$PROFILE/airootfs/root/"
 
 info "Generando ISO live (esto descarga paquetes y puede tardar)..."
-mkarchiso -v -w "$ROOT/out/work" -o "$ROOT/out" "$PROFILE"
+mkarchiso -v -w "$OUT/work" -o "$OUT" "$PROFILE"
 
-ISO="$(ls "$ROOT"/out/*.iso 2>/dev/null | head -n1 || true)"
+# --- verificación posterior (solo el artefacto recién generado) --------------
+ISO="$(find "$OUT" -maxdepth 1 -name '*.iso' | head -n1)"
 [[ -n "$ISO" ]] || fail "mkarchiso terminó pero no hay .iso en out/."
+ISO_COUNT="$(find "$OUT" -maxdepth 1 -name '*.iso' | wc -l)"
+[[ "$ISO_COUNT" -eq 1 ]] || fail "hay $ISO_COUNT ISOs en out/; no está claro cuál es la nueva. Abortando."
 
-# --- verificación posterior -------------------------------------------------
 info "Verificando la ISO generada: $ISO"
 ls -lh "$ISO"
 sha256sum "$ISO" | tee "$ISO.sha256"
@@ -66,4 +86,4 @@ else
   info "isoinfo no disponible: no se puede verificar El Torito aquí."
 fi
 info "Verificación de arranque real (QEMU/hardware): NO ejecutada automáticamente; hazla antes de distribuir."
-info "ISO lista en $ISO"
+info "ISO lista en $ISO (checksum en $ISO.sha256)"

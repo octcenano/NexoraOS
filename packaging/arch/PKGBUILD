@@ -1,11 +1,11 @@
 # Maintainer: ciberseguridad31 <https://github.com/octcenano>
-# NEXORA OS 0.3: entorno modular de agentes (CLI en Python).
+# NEXORA OS 0.4: entorno modular de agentes (CLI en Python).
 #
 # Nota sobre sha256sums: la fuente es un tag de git fijado (#tag=...), así que
 # el checksum SKIP es aceptable aquí (git verifica el commit por su SHA). Para
 # una fuente de tarball se usaría updpkgsums tras crear el tag.
 pkgname=nexora-os
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="NEXORA OS: entorno modular de agentes (beta, plano de control en Python)"
 arch=(any)

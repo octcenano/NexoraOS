@@ -1,45 +1,22 @@
-# Roadmap
+# Roadmap — NexoraOS
 
-Leyenda: `[x]` hecho · `[~]` parcial · `[ ]` pendiente
+## Beta 0.4 (actual, 2026-11-11)
 
-## Beta 0.1 — Base
-- [x] Nombre e identidad inicial NEXORA OS
-- [x] Arquitectura modular documentada
-- [x] Modos registrados
-- [x] Aislamiento de agentes definido
-- [x] Perfiles híbridos prototipados
-- [x] Account Hub y contratos de navegador
-- [x] Pruebas unitarias base
+- Watchdog: diagnóstico sin efectos, historial de incidencias, protección anti-bucle, unidades systemd con límites. (Implementado; systemd no verificado en host real.)
+- Motor IA: list_models/has_model/select_model/detect_backends, errores de conexión gestionados. (Implementado; probado con transporte falso, no contra backends reales.)
+- Security: inventario de puertos, comprobación de actualizaciones, recomendaciones, informe explícito. (Implementado y probado.)
+- Build ISO: artefactos antiguos eliminados, verificación del artefacto nuevo. (Implementado; ISO no construida aún.)
 
-## Beta 0.2 — Integración
-- [~] Interfaz gráfica real — modelo de estado + vista de terminal; falta la ventana gráfica
-- [x] Proveedor de IA local configurable — Ollama, llama.cpp, LocalAI (probado con servidor de prueba, no con modelos reales)
-- [~] Almacén seguro de credenciales — RAM + `keyring` opcional (probado con doble de prueba)
-- [ ] Conectores OAuth/API reales — solo ciclo de vida y permisos
-- [ ] Firefox y LibreWolf probados — solo detección en PATH
-- [~] Agente meteorológico conectado a fuentes verificables — Open-Meteo opt-in, no probado en vivo; AEMET pendiente
+## Beta 0.5 (objetivo)
 
-## Beta 0.3 — Sistema (esta entrega)
-- [x] Watchdog del core con recuperación acotada y sin bucles infinitos
-- [~] Unidades systemd — proporcionadas y endurecidas, no probadas en host real
-- [x] Modo Security: auditoría defensiva de solo lectura (sin capacidades ofensivas)
-- [x] Política de herramientas por modo con aprobación explícita de operaciones sensibles
-- [x] Detección de GPU y almacenamiento; perfiles híbridos con prioridad manual
-- [x] Configuración: claves desconocidas rechazadas, escritura segura y atómica
-- [x] PKGBUILD corregido (fuente git por tag) y perfil archiso reescrito al formato actual
-- [x] CI ampliada (3.10/3.12, compileall, pip check, instalación limpia, ShellCheck, bash -n, gitleaks)
-- [~] Perfil archiso validado — revisado y corregido; **no compilado** (sin mkarchiso en el entorno)
-- [ ] ISO generada y verificada (requiere entorno con archiso y red)
-- [ ] Pruebas de instalación en VM y hardware
+1. Construir y verificar la ISO en CI (job iso-build estable, sin continue-on-error) y probar arranque en QEMU.
+2. Pruebas de integración contra Ollama real en CI (servicio efímero con un modelo mínimo, solo si el runner lo permite).
+3. Verificar las unidades systemd en un host Arch real.
+4. Primer diseño de la interfaz gráfica (maqueta + arquitectura, sin fingir implementación).
+5. Instalador guiado por CLI mejorado en la ISO.
 
-## Beta 0.4 — Propuesta
-- [ ] Sandbox de procesos por agente (aislamiento real, no solo lógico)
-- [ ] OAuth real en Account Hub
-- [ ] Open-Meteo y keyring probados en vivo
-- [ ] GUI: primera ventana consumiendo `render_layout()`
+## Después
 
-## Beta 1.0
-- [ ] Auditoría externa
-- [ ] Accesibilidad y UX/UI completas
-- [ ] Actualizaciones y rollback verificados
-- [ ] Documentación de instalación y recuperación
+- GUI ligera (GTK/Qt según consumo) y instalador gráfico.
+- Perfiles híbridos automáticos con control manual (base ya presente en profiles.py).
+- Modos Creator y Office con herramientas propias.

@@ -1,4 +1,5 @@
 # Unidad de usuario (opcional, recomendada): systemctl --user enable --now nexora-watchdog
+# Estado:     systemctl --user status nexora-watchdog · journalctl --user -u nexora-watchdog -f
 # Desinstalar: systemctl --user disable --now nexora-watchdog y borrar este archivo.
 
 [Unit]
@@ -7,12 +8,16 @@ Documentation=https://github.com/octcenano/NexoraOS
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/nexora-watchdog --loop 300
+ExecStart=/usr/bin/nexora-watchdog --loop 300 --max-loop-errors 3
 Restart=on-failure
 RestartSec=30
 StartLimitIntervalSec=600
 StartLimitBurst=5
 NoNewPrivileges=true
+MemoryMax=150M
+CPUQuota=5%
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

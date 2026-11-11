@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Nexora Desktop
+Comment=Capa gráfica de NEXORA OS sobre XFCE
+Exec=nexora-desktop
+TryExec=nexora-desktop
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

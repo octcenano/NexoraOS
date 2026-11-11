@@ -1,9 +1,9 @@
 # Maintainer: ciberseguridad31 <ciberseguridad31@users.noreply.github.com>
-# NEXORA OS - paquete del nucleo adaptativo
+# NEXORA OS - nucleo adaptativo, agentes y Nexora Desktop
 pkgname=nexora-os
 pkgver=0.4.0
 pkgrel=1
-pkgdesc="NEXORA OS: nucleo adaptativo con agentes, perfiles y motor de kernel (NKE)"
+pkgdesc="NEXORA OS: nucleo adaptativo con agentes, perfiles, NKE y Nexora Desktop"
 arch=(any)
 url="https://github.com/octcenano/NexoraOS"
 license=(MIT)
@@ -12,6 +12,10 @@ makedepends=(python-build python-installer python-wheel python-setuptools)
 optdepends=(
   "ollama: modelos de IA locales"
   "systemd: unidades de servicio nexora-watchdog y nexora-nke"
+  "xfce4: base de escritorio para Nexora Desktop"
+  "python-gobject: vista GTK3 de Nexora Desktop"
+  "gtk3: vista GTK3 de Nexora Desktop"
+  "libnotify: notificaciones de escritorio"
 )
 source=("git+https://github.com/octcenano/NexoraOS.git#tag=v$pkgver")
 sha256sums=('SKIP')
@@ -31,4 +35,17 @@ package() {
     "$pkgdir/usr/lib/systemd/system/nexora-watchdog.service"
   install -Dm644 packaging/systemd/nexora-nke.service \
     "$pkgdir/usr/lib/systemd/system/nexora-nke.service"
+  # Nexora Desktop: sesión, autostart, scripts xfconf y tema
+  install -Dm755 packaging/xfce/nexora-session.sh \
+    "$pkgdir/usr/bin/nexora-session"
+  install -Dm755 packaging/xfce/panel-layout.sh \
+    "$pkgdir/usr/lib/nexora/desktop/panel-layout.sh"
+  install -Dm755 packaging/xfce/apply-appearance.sh \
+    "$pkgdir/usr/lib/nexora/desktop/apply-appearance.sh"
+  install -Dm644 packaging/xfce/autostart/nexora-desktop.desktop \
+    "$pkgdir/etc/xdg/autostart/nexora-desktop.desktop"
+  install -Dm644 packaging/xfce/themes/Nexora-Dark/index.theme \
+    "$pkgdir/usr/share/themes/Nexora-Dark/index.theme"
+  install -Dm644 packaging/xfce/themes/Nexora-Dark/gtk-3.0/gtk.css \
+    "$pkgdir/usr/share/themes/Nexora-Dark/gtk-3.0/gtk.css"
 }

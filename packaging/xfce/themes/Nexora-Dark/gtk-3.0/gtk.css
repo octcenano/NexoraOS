@@ -1,0 +1,33 @@
+/* Nexora-Dark: tema GTK3 de Nexora Desktop.
+   Oscuro por defecto, acento configurable, transparencias moderadas,
+   sin animaciones pesadas. Complementa (no sustituye) el tema base. */
+
+@define-color accent_color #3a7bd5;
+@define-color nexora_bg #1e2229;
+@define-color nexora_surface #262b33;
+@define-color nexora_text #e6e6e6;
+@define-color nexora_dim #9aa0a8;
+
+window {
+  background-color: alpha(@nexora_bg, 0.96);
+  color: @nexora_text;
+}
+
+headerbar, .titlebar {
+  background-color: @nexora_surface;
+  color: @nexora_text;
+}
+
+button {
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+button:hover {
+  background-color: alpha(@accent_color, 0.25);
+}
+
+.accent { color: @accent_color; }
+.dimmed { color: @nexora_dim; }
+
+label { font-family: "Cantarell", sans-serif; }

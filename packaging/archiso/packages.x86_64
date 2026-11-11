@@ -7,3 +7,15 @@ python
 sudo
 nano
 firefox
+xfce4
+xfce4-whiskermenu-plugin
+thunar
+network-manager-applet
+pavucontrol
+gtk3
+python-gobject
+libnotify
+networkmanager
+pipewire
+pipewire-pulse
+xfce4-power-manager

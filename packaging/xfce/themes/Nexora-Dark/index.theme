@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=Nexora-Dark
+Comment=Tema oscuro de Nexora Desktop (GTK3)
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=Nexora-Dark
+MetacityTheme=Nexora-Dark
+IconTheme=Adwaita
+CursorTheme=Adwaita
+ButtonLayout=close,minimize,maximize:menu

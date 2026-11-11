@@ -37,6 +37,12 @@ class CliTests(unittest.TestCase):
         for m in ("FORGE", "METEOROLOGY", "SECURITY", "CREATOR", "OFFICE"):
             self.assertIn(m, out)
 
+    def test_modes_declares_real_status(self):
+        # Los modos stub se declaran como tal, no como funcionales.
+        _, out, _ = run("modes")
+        self.assertIn("solo registrado", out)
+        self.assertIn("funcionalidad básica", out)
+
     def test_profile_explicit_and_warning(self):
         code, out, _ = run("profile", "--cpu-cores", "2", "--ram-gb", "4")
         self.assertEqual((code, "compact" in out), (0, True))
@@ -54,10 +60,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual(data["widgets"]["active_agent"], "MeteorologyAgent")
         self.assertEqual(run("dashboard", "--mode", "nope")[0], 2)
 
+    def test_dashboard_json_includes_mode_status(self):
+        _, out, _ = run("dashboard", "--json")
+        data = json.loads(out)
+        self.assertEqual(data["widgets"]["mode_status"], "stub")
+
     def test_health_never_fails_on_clean_install(self):
         code, out, _ = run("health")
         self.assertEqual(code, 0)
-        self.assertIn("watchdogs", out)
+        self.assertIn("watchdog", out)
+
+    def test_status_reports_components(self):
+        code, out, _ = run("status")
+        self.assertIn("config", out)
+        self.assertIn("vault", out)
+        _, out, _ = run("status", "--json")
+        data = json.loads(out)
+        self.assertIn(data["overall"], ("ok", "degraded", "failed"))
+        self.assertTrue(any(c["component"] == "config" for c in data["components"]))
+
+    def test_audit_is_read_only_and_labelled(self):
+        code, out, _ = run("audit")
+        self.assertIn("solo lectura", out)
+        _, out, _ = run("audit", "--json")
+        data = json.loads(out)
+        self.assertEqual(data["scope"], "read_only_defensive")
 
     def test_weather_simulated_by_default_is_labelled(self):
         code, out, _ = run("weather", "Madrid")
@@ -106,15 +133,21 @@ class DashboardTests(unittest.TestCase):
     def test_ask_goes_through_active_agent_and_engine(self):
         dash = NexoraDashboard(engine=LocalAIEngine())
         dash.switch_mode("meteorology")
-        self.assertIn("simulada", dash.ask("Â¿lloverÃ¡ maÃ±ana?"))
+        self.assertIn("simulada", dash.ask("¿lloverá mañana?"))
 
 
 class HealthTests(unittest.TestCase):
     def test_report_structure(self):
         rep = health_report()
         names = {c["name"] for c in rep["checks"]}
-        self.assertTrue({"python", "config", "agent_isolation", "vault", "ai_engine", "browsers"} <= names)
+        self.assertTrue({"python", "config", "agent_isolation", "vault", "ai_engine", "watchdog", "browsers"} <= names)
         self.assertEqual(rep["capabilities"]["iso_builder"], "not_implemented")
+        self.assertEqual(rep["capabilities"]["security_audit"], "implemented_readonly")
+
+    def test_watchdog_check_runs_real_components(self):
+        rep = health_report()
+        wd = next(c for c in rep["checks"] if c["name"] == "watchdog")
+        self.assertIn("config=", wd["detail"])
 
 
 if __name__ == "__main__":

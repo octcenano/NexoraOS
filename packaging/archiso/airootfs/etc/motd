@@ -1,0 +1,10 @@
+NEXORA OS Beta 0.3 (live)
+
+Comandos disponibles:
+  nexora health     diagnóstico del sistema
+  nexora modes      modos registrados
+  nexora audit      auditoría defensiva de solo lectura
+  nexora status     supervisión del core
+
+La CLI está preinstalada en el live (ver airootfs/root/install-nexora.sh).
+Proyecto: https://github.com/octcenano/NexoraOS

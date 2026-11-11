@@ -1,9 +1,17 @@
 # Modos de NEXORA
 
-- **Forge**: desarrollo, proyectos, herramientas y modelos locales.
-- **Meteorology**: agente meteorolÃ³gico independiente; observaciones, modelos, alertas y sondeos mediante proveedores validados. En Beta 0.2: observaciÃ³n actual (simulada por defecto, Open-Meteo opt-in). Sin alertas ni sondeos todavÃ­a.
-- **Security**: diagnÃ³stico defensivo y auditorÃ­as en sistemas autorizados.
-- **Creator**: planificaciÃ³n y anÃ¡lisis de contenido digital.
-- **Office**: documentos, estudio y productividad.
+| Modo | Estado | Herramientas declaradas |
+|---|---|---|
+| Forge | stub (solo registrado) | `local_ai` |
+| Meteorology | funcionalidad básica | `local_ai`, `weather_simulated`, `weather_live_opt_in` |
+| Security | funcionalidad básica | `local_ai`, `defensive_audit_readonly` |
+| Creator | stub (solo registrado) | `local_ai` |
+| Office | stub (solo registrado) | `local_ai` |
 
-Cada modo puede tener dependencias, permisos, interfaz y memoria separados. El nÃºcleo comÃºn solo proporciona servicios transversales. Forge, Security, Creator y Office son hoy agentes base (stub) con memoria aislada.
+- **Forge**: desarrollo, proyectos, herramientas y modelos locales. Stub con memoria aislada.
+- **Meteorology**: observación actual (simulada por defecto, Open-Meteo opt-in con `--live`). Sin alertas ni sondeos todavía.
+- **Security**: auditoría defensiva de solo lectura (`nexora audit`): configuración, vault, permisos de archivos de usuario, sockets en escucha y ficheros escribibles por otros. Sin escaneo de red ni capacidades ofensivas.
+- **Creator**: planificación y análisis de contenido digital. Stub.
+- **Office**: documentos, estudio y productividad. Stub.
+
+Cada modo tiene memoria privada, estado declarado (`stub`/`basic`) y una `ToolPolicy` que define qué herramientas puede usar; las operaciones sensibles exigen aprobación explícita del usuario. El núcleo común solo proporciona servicios transversales.

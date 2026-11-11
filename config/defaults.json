@@ -1,6 +1,6 @@
 {
   "product": "NEXORA OS",
-  "version": "0.2.0-beta",
+  "version": "0.3.0-beta",
   "profile_strategy": "hybrid",
   "browsers": ["firefox", "librewolf"],
   "agent_memory_policy": "isolated_per_mode",

@@ -15,6 +15,7 @@ keyring = ["keyring>=24"]
 
 [project.scripts]
 nexora = "nexora.cli:main"
+nexora-watchdog = "nexora.watchdog:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "nexora.__version__"}

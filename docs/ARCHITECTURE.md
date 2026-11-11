@@ -1,34 +1,47 @@
-# Arquitectura NEXORA OS (Beta 0.2)
+# Arquitectura NEXORA OS (Beta 0.3)
 
 ## Capas
-1. **NEXORA Core**: configuraciÃ³n (`core.config`), registro de modos (`core.registry`), permisos (`core.permissions`), perfiles (`core.profiles`), motor IA local (`core.ai_engine`), vault (`core.vault`) y diagnÃ³stico (`diagnostics.health`).
-2. **Mode Runtime**: carga un modo sin mezclar su memoria privada con la de otros modos.
-3. **Agent Runtime**: un agente por modo (`agents.base.BaseAgent`). Solo meteorologÃ­a tiene lÃ³gica propia; el resto son agentes base (stub).
-4. **Account Hub**: catÃ¡logo de conexiones y permisos revocables.
-5. **Hardware/Profile Manager**: detecciÃ³n automÃ¡tica y sugerencias; el usuario puede fijar el perfil o los lÃ­mites.
-6. **UI Runtime**: modelo de estado del dashboard + vista de terminal. La GUI grÃ¡fica consumirÃ¡ `render_layout()`.
-7. **System Integration**: futura integraciÃ³n con systemd, paquetes, escritorio e instalador (no implementada).
+1. **NEXORA Core**: configuración (`core.config`), registro de modos (`core.registry`), permisos y política de herramientas (`core.permissions`), perfiles (`core.profiles`), motor IA local (`core.ai_engine`), vault (`core.vault`), watchdog (`nexora.watchdog`) y diagnóstico (`diagnostics.health`).
+2. **Mode Runtime**: carga un modo sin mezclar su memoria privada con la de otros modos. Cada modo declara estado honesto (`stub`/`basic`) y sus herramientas (`ModeRegistry.tool_policy`).
+3. **Agent Runtime**: un agente por modo (`agents.base.BaseAgent`). Meteorología y Security tienen lógica propia; Forge, Creator y Office son stub declarados como tal.
+4. **Account Hub**: catálogo de conexiones y permisos revocables. Sin OAuth real todavía.
+5. **Hardware/Profile Manager**: detección de CPU, RAM, GPU y almacenamiento; sugerencias automáticas que nunca imponen nada al usuario.
+6. **UI Runtime**: modelo de estado del dashboard + vista de terminal renovada. La GUI futura consumirá `render_layout()`.
+7. **System Integration**: watchdog opcional como unidad systemd (sistema y usuario), PKGBUILD y perfil archiso. Sin servicios residentes por defecto.
 
 ## Aislamiento de agentes
-Cada agente tiene su propia memoria privada (`agents/<mode>/`). No hay memoria compartida. El intercambio pasa por `AgentMessage` (origen, destino, propÃ³sito y datos seleccionados) y solo se emite con `user_approved=True`. El receptor lo recibe en una **bandeja de entrada**, nunca en su memoria privada.
+Cada agente tiene su memoria privada (`agents/<mode>/`). El intercambio pasa por `AgentMessage` (origen, destino, propósito y datos seleccionados) y solo se emite con `user_approved=True`. El receptor lo recibe en una **bandeja de entrada**, nunca en su memoria privada.
 
-> Alcance: el aislamiento es lÃ³gico (espacios de nombres y API dentro de un mismo proceso). No es una frontera de seguridad frente a cÃ³digo malicioso. El aislamiento por procesos/permisos del SO pertenece a Beta 0.3+.
+> Alcance: el aislamiento es lógico (espacios de nombres y API dentro de un mismo proceso). No es una frontera de seguridad frente a código malicioso. El sandbox de procesos pertenece a una beta posterior.
+
+## Herramientas y permisos
+- `ToolPolicy` (por modo): solo se pueden usar herramientas declaradas; `authorize_use()` lanza `PermissionError` si la herramienta no está permitida y `ApprovalRequiredError` si es sensible sin aprobación.
+- Operaciones siempre sensibles (`SENSITIVE_TOOLS`): `network_remote`, `execute_commands`, `write_system`, `access_other_agent_memory`.
+- El modo Security solo declara `defensive_audit_readonly`.
+
+## Modo Security
+Auditoría defensiva de solo lectura (`nexora audit`): validez de configuración, secretos en config, backend del vault, permisos de `user.json`, sockets en escucha (vía `/proc`) y ficheros escribibles por otros bajo `~/.config/nexora`. Sin escaneo de red, sin explotación, sin modificaciones.
 
 ## Secretos
-- La configuraciÃ³n rechaza secretos (`core.config.find_secret_like`).
-- `SecureVault` es la Ãºnica vÃ­a prevista para credenciales. Backend por defecto: RAM. Backend persistente: almacÃ©n del SO vÃ­a `keyring`. No hay criptografÃ­a propia.
-- El Account Hub solo guarda `secret_ref` (nombre de la entrada en el vault), nunca el secreto.
+- La configuración rechaza secretos y claves desconocidas (`core.config`).
+- `SecureVault`: RAM por defecto; almacén del SO vía `keyring`. Sin criptografía propia.
+- `write_user_config()` escribe de forma atómica con permisos 700 (directorio) y 600 (archivo).
+- El Account Hub solo guarda `secret_ref`.
 
 ## Privacidad y red
-- TelemetrÃ­a desactivada.
-- El motor IA solo acepta endpoints locales salvo `allow_remote` explÃ­cito, y no usa proxies.
-- Las consultas de red del agente meteorolÃ³gico son opt-in.
+- Telemetría desactivada.
+- Motor IA: solo endpoints de loopback salvo `allow_remote` explícito; sin proxies; peticiones con timeout; no descarga modelos.
+- Consultas de red del agente meteorológico opt-in (`--live`).
 
-## Account Hub y navegadores
-Firefox y LibreWolf son opciones de primera clase (`both` = ambos). La conexiÃ³n se implementarÃ¡ preferentemente con OAuth/API oficial. Una integraciÃ³n local de navegador deberÃ¡ usar mecanismos documentados y consentimiento explÃ­cito. No se extraerÃ¡n cookies, contraseÃ±as ni tokens de perfiles. Hoy solo se detecta si hay ejecutables en el PATH.
+## Watchdogs
+- `nexora.watchdog.Watchdog`: componentes con `health_check` y `recover` opcionales; reinicios acotados (`max_restarts`, cooldown), estados `ok/degraded/failed`, log acotado; nunca modifica configuración ni políticas.
+- `nexora status`: una pasada; `nexora-watchdog --loop N`: para systemd.
+- Unidades systemd endurecidas y no habilitadas automáticamente. Desinstalación documentada en las propias unidades y en `packaging/README.md`.
 
-## Perfiles hÃ­bridos
-El sistema detecta recursos y recomienda un perfil (`compact`, `balanced`, `expanded`). Los ajustes manuales tienen prioridad y, si superan lo recomendado, se muestra un aviso y se puede revertir con `--profile auto`. NingÃºn perfil debe aplicar cambios de kernel, red, energÃ­a o seguridad sin mostrar el cambio y permitir revertirlo. Los lÃ­mites por perfil son orientativos, no medidos.
+## Perfiles híbridos
+Detección de CPU, RAM, GPU y almacenamiento libre sin dependencias externas. Sugerencia automática (`compact`/`balanced`/`expanded`) que el usuario puede anular; si el perfil elegido supera lo recomendado, se avisa y se puede revertir con `--profile auto`. Los límites son orientativos, no medidos.
 
-## Servicios persistentes
-Los watchdogs y demonios se instalarÃ¡n solo cuando exista una funciÃ³n concreta, consumo medido, polÃ­tica de reinicio y mecanismo de apagado. En Beta 0.2 siguen documentados, no desplegados.
+## Construcción (base Arch)
+- `packaging/arch/PKGBUILD`: fuente git fijada por tag; build con `python -m build`, check con unittest, instalación de config del sistema y unidades systemd.
+- `packaging/archiso/`: perfil en formato archiso actual (profiledef.sh, pacman.conf, packages.x86_64, airootfs con hostname/motd e `install-nexora.sh`).
+- `scripts/build-iso.sh`: comprobaciones previas, build del wheel, tests, mkarchiso y verificación posterior (sha256, `file`, isoinfo). Estado: no ejecutado aún (ver QA_REPORT).

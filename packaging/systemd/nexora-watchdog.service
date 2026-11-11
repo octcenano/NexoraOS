@@ -1,0 +1,28 @@
+# Unidad del sistema (opcional). No se habilita automáticamente.
+# Requiere un usuario 'nexora' sin privilegios: sudo useradd -r -s /usr/bin/nologin nexora
+# Instalación:  sudo systemctl daemon-reload && sudo systemctl enable --now nexora-watchdog
+# Desinstalar:  sudo systemctl disable --now nexora-watchdog y borrar este archivo.
+
+[Unit]
+Description=NEXORA OS watchdog (supervisión ligera del core)
+Documentation=https://github.com/octcenano/NexoraOS
+After=network.target
+
+[Service]
+Type=simple
+User=nexora
+ExecStart=/usr/bin/nexora-watchdog --loop 300
+Restart=on-failure
+RestartSec=30
+# Reinicios acotados por systemd además de los del propio watchdog
+StartLimitIntervalSec=600
+StartLimitBurst=5
+# Endurecimiento: el watchdog solo lee estado y escribe en el journal
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target

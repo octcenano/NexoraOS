@@ -1,18 +1,19 @@
-"""Perfiles hÃ­bridos: el hardware sugiere una base segura; el usuario manda."""
+"""Perfiles híbridos: el hardware sugiere una base segura; el usuario manda."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 TIERS = ("compact", "balanced", "expanded")
 
-# LÃ­mites orientativos por perfil (propuesta de diseÃ±o, no medidos).
+# Límites orientativos por perfil (propuesta de diseño, no medidos).
 TIER_LIMITS = {
-    "compact": {"concurrent_agents": 1, "local_model_hint": "hasta ~3B parÃ¡metros, cuantizado"},
-    "balanced": {"concurrent_agents": 2, "local_model_hint": "hasta ~8B parÃ¡metros, cuantizado"},
-    "expanded": {"concurrent_agents": 4, "local_model_hint": "modelos de 14B+ segÃºn VRAM/RAM"},
+    "compact": {"concurrent_agents": 1, "local_model_hint": "hasta ~3B parámetros, cuantizado"},
+    "balanced": {"concurrent_agents": 2, "local_model_hint": "hasta ~8B parámetros, cuantizado"},
+    "expanded": {"concurrent_agents": 4, "local_model_hint": "modelos de 14B+ según VRAM/RAM"},
 }
 
 
@@ -21,10 +22,44 @@ class HardwareInfo:
     cpu_cores: int
     ram_gb: float
     source: str
+    gpus: tuple[str, ...] = ()
+    storage_free_gb: Optional[float] = None
+
+
+def detect_gpu() -> tuple:
+    """GPUs deducibles de /sys/class/drm (fabricante). Sin dependencias externas."""
+    vendors = {"0x10de": "NVIDIA", "0x8086": "Intel", "0x1002": "AMD", "0x1022": "AMD"}
+    base = Path("/sys/class/drm")
+    found: list = []
+    try:
+        entries = sorted(os.listdir(base))
+    except OSError:
+        return ()
+    for entry in entries:
+        # tarjetas reales: card0, card1... (no card0-DP-1, card0-HDMI-A-1...)
+        if not entry.startswith("card") or not entry[4:].isdigit():
+            continue
+        try:
+            vendor = (base / entry / "device" / "vendor").read_text().strip().lower()
+        except OSError:
+            continue
+        name = vendors.get(vendor, vendor)
+        if name not in found:
+            found.append(name)
+    return tuple(found)
+
+
+def detect_storage_gb(path: Optional[Path] = None) -> Optional[float]:
+    """GB libres en el sistema de ficheros de la ruta indicada (por defecto ~)."""
+    try:
+        st = os.statvfs(str(path or Path.home()))
+        return round(st.f_bavail * st.f_frsize / 1024**3, 1)
+    except (OSError, AttributeError, ValueError):
+        return None
 
 
 def detect_hardware() -> Optional[HardwareInfo]:
-    """Detecta CPU y RAM sin dependencias externas. Devuelve None si no puede."""
+    """Detecta CPU, RAM, GPU y almacenamiento sin dependencias externas. None si no puede."""
     cores = os.cpu_count()
     ram_gb = None
     try:
@@ -40,7 +75,13 @@ def detect_hardware() -> Optional[HardwareInfo]:
             pass
     if not cores or not ram_gb or ram_gb <= 0:
         return None
-    return HardwareInfo(cpu_cores=cores, ram_gb=round(ram_gb, 1), source="os")
+    return HardwareInfo(
+        cpu_cores=cores,
+        ram_gb=round(ram_gb, 1),
+        source="os",
+        gpus=detect_gpu(),
+        storage_free_gb=detect_storage_gb(),
+    )
 
 
 def suggest_tier(cpu_cores: int, ram_gb: float) -> str:
@@ -62,7 +103,7 @@ def calculate_hybrid_profile(
     strategy:
       - ``auto``: aplica la sugerencia del hardware.
       - ``compact`` | ``balanced`` | ``expanded``: el usuario fija el perfil.
-      - ``manual``: lÃ­mites definidos por el usuario (``manual_limits``).
+      - ``manual``: límites definidos por el usuario (``manual_limits``).
     """
     if cpu_cores < 1 or ram_gb <= 0:
         raise ValueError("Los valores de hardware deben ser positivos")
@@ -77,7 +118,7 @@ def calculate_hybrid_profile(
             "strategy": "manual",
             "suggested": suggested,
             "limits": dict(manual_limits or {}),
-            "note": "LÃ­mites definidos por el usuario; el sistema no aplica ninguno por su cuenta.",
+            "note": "Límites definidos por el usuario; el sistema no aplica ninguno por su cuenta.",
         }
 
     tier = suggested if strategy == "auto" else strategy
@@ -86,7 +127,7 @@ def calculate_hybrid_profile(
         "strategy": "auto" if strategy == "auto" else "manual-tier",
         "suggested": suggested,
         "limits": dict(TIER_LIMITS[tier]),
-        "note": "Sugerencia automÃ¡tica; los ajustes del usuario tienen prioridad.",
+        "note": "Sugerencia automática; los ajustes del usuario tienen prioridad.",
     }
     if TIERS.index(tier) > TIERS.index(suggested):
         profile["warning"] = (

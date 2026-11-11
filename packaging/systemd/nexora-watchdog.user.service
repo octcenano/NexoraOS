@@ -1,0 +1,18 @@
+# Unidad de usuario (opcional, recomendada): systemctl --user enable --now nexora-watchdog
+# Desinstalar: systemctl --user disable --now nexora-watchdog y borrar este archivo.
+
+[Unit]
+Description=NEXORA OS watchdog (supervisión ligera del core, sesión de usuario)
+Documentation=https://github.com/octcenano/NexoraOS
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nexora-watchdog --loop 300
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=600
+StartLimitBurst=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

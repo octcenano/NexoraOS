@@ -1,35 +1,44 @@
 # Maintainer: ciberseguridad31 <https://github.com/octcenano>
-# Beta 0.2 de NEXORA OS: entorno modular de agentes (CLI en Python).
+# NEXORA OS 0.3: entorno modular de agentes (CLI en Python).
+#
+# Nota sobre sha256sums: la fuente es un tag de git fijado (#tag=...), así que
+# el checksum SKIP es aceptable aquí (git verifica el commit por su SHA). Para
+# una fuente de tarball se usaría updpkgsums tras crear el tag.
 pkgname=nexora-os
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="NEXORA OS: entorno modular de agentes (beta, plano de control en Python)"
 arch=(any)
 url="https://github.com/octcenano/NexoraOS"
 license=(MIT)
 depends=(python)
-makedepends=(python-build python-installer python-wheel python-setuptools)
+makedepends=(git python-build python-installer python-wheel python-setuptools)
 optdepends=('python-keyring: vault persistente con el almacén de secretos del SO'
             'ollama: motor IA local (backend ollama)'
             'firefox: integración con navegador'
             'librewolf: integración con navegador')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+source=("$pkgname::git+$url.git#tag=v$pkgver")
 sha256sums=('SKIP')
 
 build() {
-  cd "NexoraOS-$pkgver"
+  cd "$pkgname"
   python -m build --wheel --no-isolation
 }
 
 check() {
-  cd "NexoraOS-$pkgver"
+  cd "$pkgname"
   python -m unittest discover -s tests
 }
 
 package() {
-  cd "NexoraOS-$pkgver"
+  cd "$pkgname"
   python -m installer --destdir="$pkgdir" dist/*.whl
   # Configuración por defecto del sistema (la CLI la busca en /usr/share/nexora/config)
   install -Dm644 config/defaults.json "$pkgdir/usr/share/nexora/config/defaults.json"
   install -Dm644 config/user.example.json "$pkgdir/usr/share/nexora/config/user.example.json"
+  # Unidad systemd opcional del watchdog (no se habilita automáticamente)
+  install -Dm644 packaging/systemd/nexora-watchdog.service \
+    "$pkgdir/usr/lib/systemd/system/nexora-watchdog.service"
+  install -Dm644 packaging/systemd/nexora-watchdog.user.service \
+    "$pkgdir/usr/lib/systemd/user/nexora-watchdog.service"
 }

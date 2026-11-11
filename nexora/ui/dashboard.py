@@ -1,7 +1,10 @@
 """Runtime de la interfaz: modelo de estado + vista de terminal.
 
-Es el modelo que una GUI grÃ¡fica consumirÃ¡ (``render_layout``); hoy la Ãºnica
-vista implementada es de texto (``render_text``). No hay ventana grÃ¡fica aÃºn.
+Es el modelo que una GUI gráfica consumirá (``render_layout``); hoy la única
+vista implementada es de texto (``render_text``). No hay ventana gráfica aún.
+
+Estilo: identidad discreta y profesional (marco fino, estados con símbolos
+neutros). Sin colores ni estética de terminal clásica.
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ class NexoraDashboard:
             "mode_selector": list(self.registry.names()),
             "account_hub_status": self.hub.summary(),
             "active_agent": self.active_agent.name,
+            "mode_status": self.registry.mode_status(self.active_mode),
             "ai_engine": (
                 {"backend": self.engine.backend, "simulated": self.engine.simulated} if self.engine else None
             ),
@@ -69,16 +73,22 @@ class NexoraDashboard:
     def render_text(self) -> str:
         layout = self.render_layout()
         w = layout["widgets"]
-        modes = " ".join(f"[{m}]" if m == self.active_mode else m for m in w["mode_selector"])
-        engine = "no configurado"
+        modes = " ".join(f"[{m}]" if m == self.active_mode else f" {m} " for m in w["mode_selector"])
         if w["ai_engine"]:
             engine = w["ai_engine"]["backend"] + (" (simulado)" if w["ai_engine"]["simulated"] else "")
+        else:
+            engine = "no configurado"
+        status_label = {"stub": "solo registrado (stub)", "basic": "funcionalidad básica"}.get(
+            w.get("mode_status", "stub"), w.get("mode_status", ""))
         lines = [
-            f"=== {layout['header']} ===",
-            f"Estado       : {layout['system_status']}",
-            f"Modo activo  : {layout['active_mode']} ({w['active_agent']})",
-            f"Modos        : {modes}",
-            f"Account Hub  : {w['account_hub_status']}",
-            f"Motor IA     : {engine}",
+            "┌─────────────────────────────────────────────",
+            f"│ {layout['header']}",
+            "├─────────────────────────────────────────────",
+            f"│ Estado       : {layout['system_status']}",
+            f"│ Modo activo  : {layout['active_mode']} ({w['active_agent']}) · {status_label}",
+            f"│ Modos        : {modes}",
+            f"│ Account Hub  : {w['account_hub_status']}",
+            f"│ Motor IA     : {engine}",
+            "└─────────────────────────────────────────────",
         ]
         return "\n".join(lines)

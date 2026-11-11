@@ -20,10 +20,59 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .
+      - name: Comprobación de sintaxis (compileall)
+        run: python -m compileall -q nexora tests
+      - name: Dependencias coherentes (pip check)
+        run: pip check
       - name: Tests unitarios
         run: python -m unittest discover -s tests -v
-      - name: Smoke test de la CLI
+      - name: Smoke tests de CLI
         run: |
           nexora --version
           nexora modes
           nexora health
+          nexora status
+          nexora audit
+          nexora dashboard --json
+          nexora profile --cpu-cores 2 --ram-gb 4
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Construir paquete (wheel + sdist)
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Instalación limpia y arranque (instalación empaquetada)
+        run: |
+          pip install dist/*.whl
+          cd /tmp && nexora --version && nexora health && nexora modes
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck (scripts y hooks)
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+      - name: Sintaxis bash (bash -n)
+        run: |
+          for f in scripts/*.sh packaging/archiso/airootfs/root/*.sh; do
+            bash -n "$f"
+          done
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detección de secretos accidentales (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

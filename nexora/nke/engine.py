@@ -8,6 +8,9 @@ Protecciones integradas:
   - Huella propia: se mide la duración de cada ciclo; el intervalo de sondeo
     lo controla el Monitor (aumenta en reposo).
   - Categoría C: registrada como propuesta, nunca ejecutada.
+  - API controlada para la interfaz gráfica: las propuestas supervisadas solo
+    se aplican mediante approve_proposal(), que valida categoría, objetivo y
+    reversibilidad, y registra la decisión en el historial.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from nexora.nke.analyzer import analyze
 from nexora.nke.capabilities import detect_capabilities
 from nexora.nke.history import NKEHistory
 from nexora.nke.monitor import NKMonitor
-from nexora.nke.policy import CATEGORY_A, CATEGORY_B, CATEGORY_C, PolicyEngine
+from nexora.nke.policy import CATEGORY_A, CATEGORY_B, CATEGORY_C, Action, PolicyEngine
 from nexora.nke.safety import SafetyController
 
 MAX_ACTIONS_PER_CYCLE = 3
@@ -48,6 +51,7 @@ class NKEngine:
         self._last_applied: Dict[str, float] = {}   # "kind|target" -> timestamp
         self._cycles = 0
         self._active_rollbacks: List[Dict[str, Any]] = []
+        self._last_supervised: List[Action] = []
 
     # -- ciclo ----------------------------------------------------------------
     def run_cycle(self) -> Dict[str, Any]:
@@ -61,6 +65,7 @@ class NKEngine:
         cycle["interval_s"] = sample["interval_s"]
 
         decisions = self.policy.decide(findings, self.profile_requests, self.primary_mode)
+        self._last_supervised = list(decisions[CATEGORY_B])
         cycle["proposals_supervised"] = [
             {"kind": a.kind, "target": a.target, "why": a.justification} for a in decisions[CATEGORY_B]
         ]
@@ -131,6 +136,50 @@ class NKEngine:
                 self.history.record("error", f"error de ciclo: {type(exc).__name__}: {exc}")
             cycles += 1
             self.sleeper(self.monitor.interval)
+
+    # -- API controlada para paneles (Nexora Desktop / CLI) ---------------------
+    def last_supervised(self) -> List[Action]:
+        """Propuestas supervisadas del último ciclo, pendientes de decisión."""
+        return list(self._last_supervised)
+
+    def approve_proposal(self, kind: str, target: str) -> Dict[str, Any]:
+        """Aplica una propuesta supervisada con aprobación explícita del usuario.
+
+        Solo acepta acciones de categoría B, reversibles y pendientes del
+        último ciclo. Rechaza lo desconocido y lo protegido (categoría C).
+        """
+        for action in self._last_supervised:
+            if action.kind == kind and action.target == target:
+                if action.category != CATEGORY_B:
+                    raise PermissionError(f"'{kind}' no es una acción supervisada")
+                if not action.reversible:
+                    raise PermissionError(f"'{kind}' no es reversible: no se aprueba desde la interfaz")
+                outcome = self.safety.apply(action, user_approved=True)
+                self.history.record("apply", f"{action.kind} en {action.target} (aprobada por el usuario)",
+                                    justification=action.justification, rollback=outcome["rollback"])
+                self._last_supervised = [a for a in self._last_supervised
+                                         if not (a.kind == kind and a.target == target)]
+                return outcome
+        raise ValueError(f"no hay ninguna propuesta pendiente '{kind}' en '{target}'")
+
+    def reject_proposal(self, kind: str, target: str) -> None:
+        """Rechaza una propuesta supervisada pendiente (queda registrada)."""
+        for action in self._last_supervised:
+            if action.kind == kind and action.target == target:
+                self._last_supervised = [a for a in self._last_supervised
+                                         if not (a.kind == kind and a.target == target)]
+                self.history.record("reject", f"{action.kind} en {action.target}: rechazada por el usuario")
+                return
+        raise ValueError(f"no hay ninguna propuesta pendiente '{kind}' en '{target}'")
+
+    def undo_last(self) -> Dict[str, Any]:
+        """Revierte el último ajuste reversible activo (si lo hay)."""
+        if not self._active_rollbacks:
+            raise ValueError("no hay ajustes activos que deshacer")
+        rb = self._active_rollbacks.pop()
+        self.safety.rollback(rb)
+        self.history.record("rollback", f"deshacer último ajuste ({rb.get('kind', '?')})")
+        return {"state": "ok", "rolled_back": rb}
 
     # -- estado -----------------------------------------------------------------
     def status(self) -> Dict[str, Any]:

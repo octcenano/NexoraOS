@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nexora",
         description="NEXORA OS: plano de control",
-        epilog="Ejemplos: nexora health · nexora weather Madrid --live · nexora audit",
+        epilog="Ejemplos: nexora health · nexora weather Madrid --live · nexora audit · nexora nke status",
     )
     parser.add_argument("--version", action="version", version=f"NEXORA OS {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     u = sub.add_parser("audit", help="Auditoría defensiva de solo lectura (modo Security)")
     u.add_argument("--json", action="store_true")
+
+    n = sub.add_parser("nke", help="Nexora Kernel Engine: estado, diagnóstico e historial")
+    n.add_argument("action", nargs="?", choices=["status", "diagnose", "history"], default="status")
+    n.add_argument("--json", action="store_true")
     return parser
 
 
@@ -125,6 +129,62 @@ def _cmd_audit(args) -> int:
     return 0 if report["overall"] != "fail" else 1
 
 
+def _cmd_nke(args) -> int:
+    """NKE desde la CLI: solo lectura en 'status'/'history'.
+
+    'diagnose' ejecuta un ciclo completo del motor: las acciones de categoría
+    A (reversibles y de bajo riesgo) pueden aplicarse; las B se listan como
+    pendientes de aprobación y las C solo se documentan.
+    """
+    from nexora.nke.engine import NKEngine
+
+    engine = NKEngine()
+    if args.action == "status":
+        report = engine.status()
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        caps = report["capabilities"]
+        print(f"Nexora Kernel Engine (kernel {caps['kernel_release']})")
+        print(f"  PSI: {'sí' if caps['can_psi_monitoring'] else 'no disponible'} · "
+              f"cgroups v2: {'sí' if caps['can_cgroup_limits'] else 'no disponible'} · "
+              f"cpufreq: {'sí' if caps['can_cpufreq_tuning'] else 'no disponible'}")
+        print(f"  Ciclos ejecutados: {report['cycles']} · intervalo de sondeo: {report['monitor_interval_s']} s")
+        print(f"  Historial: {report['history_summary'] or 'vacío'}")
+        return 0
+
+    if args.action == "diagnose":
+        cycle = engine.run_cycle()
+        if args.json:
+            print(json.dumps(cycle, ensure_ascii=False, indent=2))
+            return 0
+        print(f"Ciclo NKE #{cycle['cycle']} ({cycle['duration_ms']} ms, sondeo cada {cycle['interval_s']} s)")
+        print(f"  Hallazgos: {', '.join(cycle['findings']) or 'ninguno'}")
+        print(f"  Acciones automáticas aplicadas: {cycle['applied'] or 'ninguna'}")
+        if cycle["proposals_supervised"]:
+            print("  Pendientes de aprobación (categoría B):")
+            for pr in cycle["proposals_supervised"]:
+                print(f"    - {pr['kind']} en {pr['target']}: {pr['why']}")
+        if cycle["proposals_protected"]:
+            print("  Protegidas (NKE no las ejecuta; requieren intervención manual):")
+            for pr in cycle["proposals_protected"]:
+                print(f"    - {pr['kind']} en {pr['target']}: {pr['why']}")
+        if cycle["rolled_back"]:
+            print(f"  Rollback automático por degradación: {cycle['rolled_back']}")
+        return 0
+
+    events = engine.history.events()
+    if args.json:
+        print(json.dumps(list(events), ensure_ascii=False, indent=2))
+        return 0
+    if not events:
+        print("Historial NKE vacío (aún no se ha ejecutado ningún ciclo).")
+        return 0
+    for e in events:
+        print(f"  [{e['kind']:<8}] {e['detail']}")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -133,6 +193,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"NEXORA OS Control Plane CLI v{__version__}")
         print("Usa --help para ver los comandos disponibles.")
         return 0
+
+    if args.command == "nke":
+        return _cmd_nke(args)
 
     try:
         cfg = load_config()

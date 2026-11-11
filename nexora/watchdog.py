@@ -205,9 +205,19 @@ def watchdog_from_config(cfg: Optional[dict] = None) -> Watchdog:
         except VaultUnavailableError:
             return False
 
+    def check_nke() -> bool:
+        """NKE: sus capacidades se pueden leer y son un dict válido."""
+        try:
+            from nexora.nke.capabilities import detect_capabilities
+            caps = detect_capabilities()
+            return isinstance(caps, dict) and isinstance(caps.get("kernel_release"), str)
+        except Exception:
+            return False
+
     wd.register(Component("config", check_config, description="Carga y validación de configuración"))
     wd.register(Component("agent_isolation", check_isolation, description="Memoria privada por modo"))
     wd.register(Component("vault", check_vault, description="Backend de secretos disponible"))
+    wd.register(Component("nke", check_nke, description="Nexora Kernel Engine: lectura de capacidades del kernel"))
     return wd
 
 

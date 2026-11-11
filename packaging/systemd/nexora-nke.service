@@ -1,0 +1,42 @@
+# Unidad systemd de NEXORA Kernel Engine (opcional, no se habilita sola).
+#
+# Diseño de privilegios mínimos: corre como usuario dinámico sin privilegios.
+# En este modo NKE monitoriza (PSI, /proc) y prepara propuestas; las acciones
+# que requieren escribir en /sys/fs/cgroup las denegará el kernel y quedarán
+# registradas como error en el historial. Para aplicar límites de cgroups,
+# habilita la unidad del sistema con un usuario dedicado y permisos
+# delegados (systemctl set-property) en lugar de dar root a NKE.
+#
+# Estado: systemctl status nexora-nke · journalctl -u nexora-nke -f
+# Desinstalar: systemctl disable --now nexora-nke
+
+[Unit]
+Description=NEXORA Kernel Engine (optimización adaptativa)
+Documentation=https://github.com/octcenano/NexoraOS
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nexora-nke --loop 30 --max-loop-errors 3
+Restart=on-failure
+RestartSec=60
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Huella mínima y endurecimiento
+MemoryMax=80M
+CPUQuota=2%
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+PrivateTmp=true
+DynamicUser=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,23 @@
 # Changelog
 
+## En desarrollo (Nexora Kernel Engine, 2026-11-11)
+
+### NKE — Nexora Kernel Engine (nuevo)
+- Motor de optimización en espacio de usuario sobre interfaces estándar del kernel: `/proc`, `/sys`, PSI, cgroups v2 y systemd. No modifica el kernel ni carga módulos.
+- `nexora/nke/capabilities.py`: detección real de capacidades (PSI, cgroups v2, eBPF, cpufreq, swap, Secure Boot). Si una capacidad no existe, no se proponen acciones que la requieran.
+- `nexora/nke/monitor.py`: monitor con sondeo adaptativo (2 s a 60 s; se ralentiza en reposo y vuelve al mínimo con presión).
+- `nexora/nke/analyzer.py`: hallazgos por umbrales (presión de memoria/CPU/IO, swap thrashing, poca RAM) con acciones sugeridas.
+- `nexora/nke/policy.py`: catálogo de acciones con tres categorías. A (automática, reversible), B (supervisada: propuesta que exige aprobación humana) y C (protegida: nunca ejecutada por NKE, solo listada como propuesta informativa).
+- `nexora/nke/safety.py`: Safety Controller con validación, rollback automático y rechazo de la categoría C.
+- `nexora/nke/engine.py`: ciclo completo con cooldown por objetivo (300 s), máximo 3 acciones automáticas por ciclo, detección de degradación y rollback automático. Mide su propia duración.
+- `nexora/nke/kernel_extension.py`: Kernel Manager, Module Manager (solo lectura; la carga de módulos es siempre propuesta C), Hardware Interface y ExtensionAPI de consultas cerradas para agentes.
+- CLI: `nexora nke {status,diagnose,history}` y comando `nexora-nke` (`--once`, `--loop`, `--json`, protección anti-bucle).
+- Dashboard: panel `Kernel Engine` con release, capacidades y estado del motor.
+- Watchdog: nuevo componente `nke` (verifica la lectura de capacidades).
+- Unidad systemd `nexora-nke.service` con DynamicUser, MemoryMax=80M, CPUQuota=2% y endurecimiento completo.
+- Tests: `tests/test_nke.py` (capacidades, monitor, analizador, políticas, seguridad, motor, rollback, huella, extensión de kernel, integración CLI/dashboard) y `test_watchdog.py` actualizado.
+- Documentación: `docs/NKE.md`.
+
 ## En desarrollo (Fase 1 y Fase 2 del plan adaptativo, 2026-11-11)
 
 ### Fase 1 — Estabilización
@@ -37,7 +55,7 @@
 ### Build y packaging
 - `scripts/build-iso.sh`: elimina ISOs y wheels antiguos antes de compilar, falla si `dist/` tiene más de un wheel, verifica que la ISO generada es única y válida (sha256, file, El Torito cuando isoinfo está disponible).
 - Comprobaciones previas: python, python-build, archivos obligatorios del perfil archiso.
-- PKGBUILD: pkgver 0.4.0. Perfil archiso: iso_version 0.4.0.
+- PKGBUILD: pkgver 0.4.0. Perfil archiso: iso_version 0.4.0. Ahora instala también `nexora-nke.service`.
 
 ### CI
 - Gitleaks fijado a la versión v8.21.2 (binario oficial) en lugar de una acción flotante.

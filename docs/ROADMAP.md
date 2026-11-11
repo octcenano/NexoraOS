@@ -1,5 +1,10 @@
 # Roadmap — NexoraOS
 
+## Nexora Kernel Engine (2026-11-11, implementado, pendiente de CI y validación en host real)
+
+- Motor completo en espacio de usuario: capacidades del kernel, monitor adaptativo, analizador, políticas A/B/C, Safety Controller con rollback, historial, CLI (`nexora nke`, `nexora-nke`), panel Kernel Engine en el dashboard, componente en el watchdog y unidad systemd endurecida.
+- Pendiente: confirmar CI verde, validar aplicación real de cgroups/renice en host con permisos, programas eBPF concretos (fase posterior), lecturas de GPU/VRAM y batería en el monitor de NKE.
+
 ## Fase 1 — Estabilización (2026-11-11, hecha salvo verificación de CI)
 
 - Corregido el test de cooldown del watchdog (regresión introducida en 0.4).
@@ -29,3 +34,4 @@
 ## Notas de reorganización
 
 - La Fase 2 se adelantó respecto al plan original porque el coordinador y el gestor de recursos son prerrequisito de los modos (Fase 3) y de la GUI (Fase 4): sin reparto de recursos y sin política de tareas, los modos serían etiquetas.
+- NKE se implementó antes de la Fase 3 porque los modos (Gaming, Forge, etc.) deben comunicar sus necesidades al motor; sin NKE, los perfiles híbridos no tendrían un mecanismo real de aplicación de políticas.

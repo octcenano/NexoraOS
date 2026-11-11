@@ -40,6 +40,19 @@ class NexoraDashboard:
     def active_agent(self) -> BaseAgent:
         return self._agent_for(self.active_mode)
 
+    def kernel_engine_summary(self) -> Optional[dict]:
+        """Panel Kernel Engine: capacidades reales del kernel (solo lectura).
+
+        Si NKE no puede leer las interfaces (kernel sin PSI, contenedor sin
+        /sys), devuelve None y el dashboard lo muestra como no disponible.
+        """
+        try:
+            from nexora.nke.kernel_extension import ExtensionAPI
+            res = ExtensionAPI().request("dashboard", "kernel_status")
+            return res["data"] if res["status"] == "ok" else None
+        except Exception:
+            return None
+
     @property
     def widgets(self) -> dict:
         return {
@@ -50,6 +63,7 @@ class NexoraDashboard:
             "ai_engine": (
                 {"backend": self.engine.backend, "simulated": self.engine.simulated} if self.engine else None
             ),
+            "kernel_engine": self.kernel_engine_summary(),
         }
 
     def switch_mode(self, mode_name: str) -> bool:
@@ -78,6 +92,12 @@ class NexoraDashboard:
             engine = w["ai_engine"]["backend"] + (" (simulado)" if w["ai_engine"]["simulated"] else "")
         else:
             engine = "no configurado"
+        ke = w.get("kernel_engine")
+        if ke:
+            kernel_line = (f"kernel {ke['release']} · PSI {'sí' if ke['psi'] else 'no'} · "
+                           f"cgroups v2 {'sí' if ke['cgroup_v2'] else 'no'}")
+        else:
+            kernel_line = "no disponible"
         status_label = {"stub": "solo registrado (stub)", "basic": "funcionalidad básica"}.get(
             w.get("mode_status", "stub"), w.get("mode_status", ""))
         lines = [
@@ -89,6 +109,7 @@ class NexoraDashboard:
             f"│ Modos        : {modes}",
             f"│ Account Hub  : {w['account_hub_status']}",
             f"│ Motor IA     : {engine}",
+            f"│ Kernel Engine: {kernel_line}",
             "└─────────────────────────────────────────────",
         ]
         return "\n".join(lines)

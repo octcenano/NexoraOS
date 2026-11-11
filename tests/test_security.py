@@ -50,7 +50,11 @@ class ReadOnlyAuditTest(unittest.TestCase):
         fake += "   0: 00000000:0016 00000000:0000 0A 00000000:00000000\n"
         with mock.patch("builtins.open", mock.mock_open(read_data=fake)):
             sockets = security._listening_sockets()
-        self.assertEqual(sockets, [("tcp", 22)])
+        # El inventario lee tanto /proc/net/tcp como /proc/net/tcp6; con el
+        # mock, ambos devuelven el mismo contenido, por lo que el puerto 22
+        # aparece en ambas familias.
+        self.assertEqual([s for s in sockets if s[0] == "tcp"], [("tcp", 22)])
+        self.assertEqual([s for s in sockets if s[0] == "tcp6"], [("tcp6", 22)])
 
     def test_sync_pacman_inexistente(self):
         with mock.patch.object(security.os, "stat", side_effect=OSError):

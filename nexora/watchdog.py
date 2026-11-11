@@ -74,7 +74,7 @@ class Watchdog:
         self._restarts[component.name] = 0
 
     # -- supervisión -------------------------------------------------------
-    def check(self, name: str) -> Dict[str, Any]:
+    def check(self, name: str, allow_recover: bool = True) -> Dict[str, Any]:
         comp = self._components.get(name)
         if comp is None:
             raise KeyError(f"Componente desconocido: {name}")
@@ -85,26 +85,27 @@ class Watchdog:
             healthy = False
             entry["error"] = f"{type(exc).__name__}: {exc}"
         entry["healthy"] = healthy
-        if not healthy and name not in self._exhausted:
+        if not healthy:
             entry["restarted"] = False
-            entry["exhausted"] = False
-            if comp.recover is not None and self._restarts[name] < self.max_restarts:
-                now = self._clock()
-                since = now - self._last_attempt.get(name, 0.0)
-                if since >= self.cooldown_s:
-                    self._last_attempt[name] = now
-                    self._restarts[name] += 1
-                    try:
-                        recovered = bool(comp.recover())
-                    except Exception as exc:
-                        recovered = False
-                        entry["error"] = f"{type(exc).__name__}: {exc}"
-                    entry["restarted"] = True
-                    entry["recovered"] = recovered
-                    entry["restart_count"] = self._restarts[name]
-            elif comp.recover is not None:
-                self._exhausted.add(name)
-                entry["exhausted"] = True
+            entry["exhausted"] = name in self._exhausted
+            if allow_recover and name not in self._exhausted:
+                if comp.recover is not None and self._restarts[name] < self.max_restarts:
+                    now = self._clock()
+                    since = now - self._last_attempt.get(name, 0.0)
+                    if since >= self.cooldown_s:
+                        self._last_attempt[name] = now
+                        self._restarts[name] += 1
+                        try:
+                            recovered = bool(comp.recover())
+                        except Exception as exc:
+                            recovered = False
+                            entry["error"] = f"{type(exc).__name__}: {exc}"
+                        entry["restarted"] = True
+                        entry["recovered"] = recovered
+                        entry["restart_count"] = self._restarts[name]
+                elif comp.recover is not None:
+                    self._exhausted.add(name)
+                    entry["exhausted"] = True
         # historial de incidencias: transición sano -> no sano
         if not healthy and self._was_healthy.get(name, True):
             self._incidents.append({
@@ -118,8 +119,8 @@ class Watchdog:
     def check_all(self) -> List[Dict[str, Any]]:
         return [self.check(name) for name in self._components]
 
-    def run_once(self) -> Dict[str, Any]:
-        results = self.check_all()
+    @staticmethod
+    def _overall(results: List[Dict[str, Any]]) -> str:
         states = []
         for r in results:
             if r["healthy"]:
@@ -130,8 +131,11 @@ class Watchdog:
                 states.append("failed")
             else:
                 states.append("degraded")
-        overall = "ok" if all(s == "ok" for s in states) else "failed" if "failed" in states else "degraded"
-        return {"overall": overall, "components": results}
+        return "ok" if all(s == "ok" for s in states) else "failed" if "failed" in states else "degraded"
+
+    def run_once(self) -> Dict[str, Any]:
+        results = self.check_all()
+        return {"overall": self._overall(results), "components": results}
 
     # -- diagnóstico (sin efectos) ------------------------------------------
     def diagnose(self) -> Dict[str, Any]:
@@ -139,9 +143,9 @@ class Watchdog:
 
         No ejecuta recuperaciones ni modifica nada: solo observa.
         """
-        report = self.run_once()
+        results = [self.check(name, allow_recover=False) for name in self._components]
         recommendations: List[str] = []
-        for r in report["components"]:
+        for r in results:
             if r.get("exhausted"):
                 recommendations.append(
                     f"'{r['component']}' agotó sus {self.max_restarts} recuperaciones: "
@@ -152,8 +156,8 @@ class Watchdog:
                     f"'{r['component']}' está degradado; ejecuta 'nexora health' para el detalle."
                 )
         return {
-            "overall": report["overall"],
-            "components": report["components"],
+            "overall": self._overall(results),
+            "components": results,
             "incidents": list(self._incidents),
             "restart_counts": dict(self._restarts),
             "recommendations": recommendations,

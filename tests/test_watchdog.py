@@ -61,13 +61,9 @@ class WatchdogTests(unittest.TestCase):
 
     def test_recuperacion_con_cooldown(self):
         w, clock = self._watchdog()
-        state = {"n": 0}
-        def check():
-            return state["n"] > 0
-        def recover():
-            state["n"] += 1
-            return True
-        w.register(wd.Component("svc", check, recover=recover))
+        # El componente sigue degradado: la recuperación "intenta" pero no cura,
+        # de modo que se puede observar el cooldown entre reintentos.
+        w.register(wd.Component("svc", lambda: False, recover=lambda: True))
         e1 = w.check("svc")
         self.assertTrue(e1["restarted"])
         self.assertTrue(e1["recovered"])

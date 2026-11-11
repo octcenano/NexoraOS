@@ -45,7 +45,7 @@ class NKEngine:
         self.policy = PolicyEngine(self.caps)
         self.safety = SafetyController(executor=executor)
         self.history = NKEHistory()
-        self._last_applied: Dict[str, float] = {}   # (kind,target) -> timestamp
+        self._last_applied: Dict[str, float] = {}   # "kind|target" -> timestamp
         self._cycles = 0
         self._active_rollbacks: List[Dict[str, Any]] = []
 
@@ -71,8 +71,9 @@ class NKEngine:
         applied, rolled_back = [], []
         now = self.clock()
         for action in decisions[CATEGORY_A]:
-            key = (action.kind, action.target)
-            if now - self._last_applied.get(key[0] + "|" + key[1], 0.0) < TARGET_COOLDOWN_S:
+            key = action.kind + "|" + action.target
+            last = self._last_applied.get(key)
+            if last is not None and now - last < TARGET_COOLDOWN_S:
                 continue
             if len(applied) >= MAX_ACTIONS_PER_CYCLE:
                 break
@@ -80,7 +81,7 @@ class NKEngine:
                 outcome = self.safety.apply(action, user_approved=False)
                 self.history.record("apply", f"{action.kind} en {action.target}",
                                     justification=action.justification, rollback=outcome["rollback"])
-                self._last_applied[key[0] + "|" + key[1]] = now
+                self._last_applied[key] = now
                 applied.append({"kind": action.kind, "target": action.target})
                 self._active_rollbacks.append(outcome["rollback"])
             except Exception as exc:

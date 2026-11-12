@@ -63,9 +63,10 @@ jobs:
           python -m pip install --quiet pip-audit > audit-install.log 2>&1 || status=$?
           python -m pip install --quiet . > install.log 2>&1 || status=$?
           # El paquete local (nexora-os) no está en PyPI: se audita el resto
-          # del entorno desde un freeze explícito con --disable-pip.
+          # del entorno desde un freeze explícito. --no-deps es obligatorio con
+          # --disable-pip y requirements sin hashes: el freeze ya está cerrado.
           pip freeze | grep -v '^nexora-os==' > requirements-audit.txt || status=$?
-          python -m pip_audit -r requirements-audit.txt --strict --disable-pip > pip-audit.log 2>&1 || status=$?
+          python -m pip_audit -r requirements-audit.txt --strict --disable-pip --no-deps > pip-audit.log 2>&1 || status=$?
           cat pip-audit.log
           if [ "$status" -ne 0 ]; then
             tail -n 30 pip-audit.log install.log 2>/dev/null | sed 's/^/::error::/'

@@ -11,6 +11,7 @@ comandos a partir de entradas del usuario ni de modelos.
 
 from __future__ import annotations
 
+import os
 import pwd
 import shutil
 import subprocess
@@ -49,7 +50,7 @@ SECTIONS: Dict[str, Dict[str, Any]] = {
     ]},
     "users": {"label": "Usuarios", "entries": [
         {"label": "Listado de cuentas del sistema", "command": None,
-         "note": "solo lectura (detected accounts); la creación y edición de cuentas requiere polkit y está fuera de la beta"},
+         "note": "solo lectura (cuentas detectadas); la creación y edición de cuentas requiere polkit y está fuera de la beta"},
     ]},
     "storage": {"label": "Almacenamiento", "entries": [
         {"label": "Gestor de archivos", "command": "thunar"},
@@ -119,6 +120,8 @@ def pending_updates(pacman_path: Optional[str] = None) -> Dict[str, Any]:
     path = pacman_path or shutil.which("pacman")
     if path is None:
         return {"state": "unavailable", "message": "pacman no está instalado en este sistema"}
+    if not os.path.exists(path):
+        return {"state": "unavailable", "message": "pacman no está disponible en: " + path}
     try:
         proc = subprocess.run([path, "-Qu"], capture_output=True, text=True,
                               timeout=30, shell=False)

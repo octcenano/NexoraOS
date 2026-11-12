@@ -1,0 +1,122 @@
+name: Seguridad
+
+# Escaneo de seguridad del código y de las dependencias. Se ejecuta en cada
+# push a main, en pull requests y una vez por semana (lunes 06:00 UTC) para
+# detectar vulnerabilidades nuevas en dependencias aunque el código no cambie.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Análisis estático de seguridad (bandit)
+        run: |
+          status=0
+          python -m pip install --quiet bandit > bandit-install.log 2>&1 || status=$?
+          python -m bandit -r nexora -f txt -ll > bandit.log 2>&1 || status=$?
+          cat bandit.log
+          if grep -qE 'Issue:' bandit.log; then
+            grep -E 'Issue:|Location:' bandit.log | head -30 | sed 's/^/::error::/'
+          fi
+          exit $status
+      - name: Publicar diagnóstico en un issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job bandit, commit ${{ github.sha }}."
+            echo "### bandit.log (tail)"
+            echo '```'
+            tail -n 100 bandit.log 2>/dev/null || echo "(bandit.log no existe)"
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo octcenano/NexoraOS \
+            --title "Seguridad: hallazgos de bandit (run ${{ github.run_number }})" \
+            --body-file issue-body.md
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Auditoría de dependencias (pip-audit)
+        run: |
+          status=0
+          python -m pip install --quiet pip-audit > audit-install.log 2>&1 || status=$?
+          python -m pip install --quiet . > install.log 2>&1 || status=$?
+          python -m pip_audit --strict > pip-audit.log 2>&1 || status=$?
+          cat pip-audit.log
+          if [ "$status" -ne 0 ]; then
+            tail -n 30 pip-audit.log install.log 2>/dev/null | sed 's/^/::error::/'
+          fi
+          exit $status
+      - name: Publicar diagnóstico en un issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job pip-audit, commit ${{ github.sha }}."
+            echo "### pip-audit.log (tail)"
+            echo '```'
+            tail -n 80 pip-audit.log 2>/dev/null || echo "(pip-audit.log no existe)"
+            echo '```'
+            echo "### install.log (tail)"
+            echo '```'
+            tail -n 40 install.log 2>/dev/null || echo "(install.log no existe)"
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo octcenano/NexoraOS \
+            --title "Seguridad: vulnerabilidades en dependencias (run ${{ github.run_number }})" \
+            --body-file issue-body.md
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detección de secretos en el historial (gitleaks v8.21.2, binario oficial)
+        run: |
+          status=0
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz -o gitleaks.tgz || status=$?
+          tar -xzf gitleaks.tgz gitleaks || status=$?
+          ./gitleaks detect --redact -v > gitleaks.log 2>&1 || status=$?
+          cat gitleaks.log
+          if grep -qE 'Finding:' gitleaks.log; then
+            grep -E 'Finding:|Secret:|File:' gitleaks.log | head -30 | sed 's/^/::error::/'
+          fi
+          exit $status
+      - name: Publicar diagnóstico en un issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Run: ${{ github.run_id }} (número ${{ github.run_number }}), job gitleaks, commit ${{ github.sha }}."
+            echo "### gitleaks.log (tail)"
+            echo '```'
+            tail -n 80 gitleaks.log 2>/dev/null || echo "(gitleaks.log no existe)"
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo octcenano/NexoraOS \
+            --title "Seguridad: posibles secretos en el repositorio (run ${{ github.run_number }})" \
+            --body-file issue-body.md

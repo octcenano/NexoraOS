@@ -10,7 +10,7 @@ def fake_fetch(calls):
         if "geocoding" in url:
             if params["name"] == "Atlantis":
                 return {}
-            return {"results": [{"name": "Madrid", "admin1": "Comunidad de Madrid", "country": "EspaÃ±a",
+            return {"results": [{"name": "Madrid", "admin1": "Comunidad de Madrid", "country": "España",
                                  "latitude": 40.4, "longitude": -3.7}]}
         return {"current": {"time": "2026-11-11T12:00", "temperature_2m": 14.2, "relative_humidity_2m": 71,
                             "weather_code": 61, "wind_speed_10m": 9.5}}
@@ -30,7 +30,7 @@ class MeteorologyTests(unittest.TestCase):
         obs = agent.get_weather_observation("  Madrid ")
         self.assertFalse(obs["simulated"])
         self.assertEqual(obs["location"], "Madrid")
-        self.assertEqual(obs["resolved_location"], "Madrid, Comunidad de Madrid, EspaÃ±a")
+        self.assertEqual(obs["resolved_location"], "Madrid, Comunidad de Madrid, España")
         self.assertEqual(obs["temp_c"], 14.2)
         self.assertEqual(obs["condition"], "Lluvia ligera")
         self.assertIn("Open-Meteo", obs["attribution"])
@@ -50,7 +50,7 @@ class MeteorologyTests(unittest.TestCase):
             if "geocoding" in url:
                 return {"results": [{"name": "X", "latitude": 0, "longitude": 0}]}
             return {"current": {"temperature_2m": 1, "weather_code": 1234}}
-        self.assertEqual(OpenMeteoProvider(fetch_json=fetch).observe("X")["condition"], "CÃ³digo WMO 1234")
+        self.assertEqual(OpenMeteoProvider(fetch_json=fetch).observe("X")["condition"], "Código WMO 1234")
 
     def test_empty_location(self):
         with self.assertRaises(ValueError):

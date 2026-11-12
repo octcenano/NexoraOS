@@ -1,47 +1,51 @@
-# Informe de calidad (QA) — Nexora Desktop, modos oficiales, NKE y CI
+# Informe de calidad (QA) — Beta 0.4.0 de NexoraOS
 
-Fecha: 2026-11-11. Alcance: estado tras Nexora Desktop, los cinco modos oficiales, el NKE y la corrección de la CI (HEAD faa9012).
+Fecha: 2026-11-11. Alcance: cierre de beta con Nexora Desktop, modos oficiales, NKE, CI verde y procesos de seguridad y release.
 
 ## 1. Pruebas ejecutadas y resultados exactos (CI, GitHub Actions)
 
 | Prueba | Dónde | Resultado |
 | --- | --- | --- |
-| Tests unitarios (248 tests, Python 3.10 y 3.12) | GitHub Actions, run #34 en adelante (commit 48c2de4) | VERDE: el job tests pasó en todos los runs desde la corrección de los dos tests (no se publicó ningún issue de tests desde el run 34) |
-| Smoke test CLI (nexora --help, nexora health, nexora-watchdog --diagnose) | GitHub Actions | VERDE desde el run 34 |
-| Lint (ShellCheck, bash -n, gitleaks 8.21.2) | GitHub Actions | VERDE (runs 33-39) |
-| Construcción y validación del wheel | GitHub Actions | VERDE (sin issue de package desde que existe diagnóstico) |
-| Construcción de la ISO | GitHub Actions, runs 35-39 | PROGRESO: validación del perfil superada (run 38), montaje del chroot superado con contenedor privilegiado, sincronización de pacman corregida (SigLevel); el último run (SigLevel) seguía en cola o compilando al cerrar este informe |
-| Tests locales | Este entorno | NO ejecutados: no hay intérprete Python en el sandbox; toda la validación se hace en CI |
-| Vista GTK3 de Nexora Desktop | Ninguno | NO ejecutada: sin PyGObject ni sesión gráfica; probada la ausencia controlada (error claro) |
+| Tests unitarios (248+ tests, Python 3.10 y 3.12) | Runs 40 y 41 (CI verde) | VERDE |
+| Smoke test CLI (nexora --help, nexora health, nexora-watchdog --diagnose) | Runs 40 y 41 | VERDE |
+| Lint (ShellCheck, bash -n, gitleaks 8.21.2) | Runs 40 y 41 | VERDE |
+| Construcción y validación del wheel | Runs 40 y 41 | VERDE |
+| Construcción de la ISO (mkarchiso, contenedor archlinux:base privilegiado) | Runs 40 y 41 (8-9 min) | VERDE: ISO construida |
+| Workflow de seguridad (bandit, pip-audit, gitleaks sobre historial) | Nuevo workflow | Pendiente de primer run; se ejecuta en el próximo push y semanalmente |
+| Workflow de release (tag v* → wheel + ISO + release borrador) | Nuevo workflow | Pendiente de primer tag; no se crea el tag hasta confirmar verde |
+| Vista GTK3 de Nexora Desktop | Ninguno | NO ejecutada: sin PyGObject ni sesión gráfica; probada la ausencia controlada |
 | Arranque de la ISO | Ninguno | NO verificado: requiere QEMU o hardware |
 | Consumo en reposo del escritorio | Ninguno | NO medido: no se publican cifras sin medición reproducible |
+| Pruebas contra Ollama/llama.cpp reales | Ninguno | NO: validado con transporte falso que replica sus APIs |
 
-## 2. Bugs encontrados y corregidos (este ciclo, con causa raíz)
+## 2. Bugs encontrados y corregidos durante el desarrollo de la beta (causa raíz)
 
-1. Cooldown del NKEngine a t=0: `now - 0.0 < 300` bloqueaba toda acción automática al arrancar. Corregido: solo aplica cooldown si hay acción previa registrada.
-2. `defaults.json` empaquetado desactualizado (0.2.0-beta frente a 0.4.0-beta): `nexora health` fallaba en el smoke test de CI.
-3. `test_degradacion_provoca_rollback`: el muestreo reescribía PSI después de leer; corregido para escribir antes de leer.
-4. `service_state` y sockets: aceptar tcp y tcp6 (el mock de builtins.open hacía que ambas familias leyeran el mismo contenido).
-5. `profiledef.sh`: bloque INI inválido `[build] options=()` sustituido por `buildmodes=('iso')`.
-6. Validación de mkarchiso (issue 35): `uefi.systemd` no es un modo válido (es `uefi.systemd-boot`); faltaba el paquete syslinux, el directorio syslinux/ y efiboot/loader/entries. Corregido con profiledef, syslinux.cfg, loader.conf y entrada UEFI.
-7. mkarchiso no puede montar proc en un contenedor sin privilegios (issue 38): `container: options: --privileged` en CI.
-8. pacman abortaba por *.db.sig 404 (issue 39): `SigLevel = Required DatabaseOptional` (estándar releng) en el pacman.conf del perfil.
-9. Tests desalineados con la API real: `intensity_policy()` devuelve un dict (no un objeto con .policy) y `SystemCenter.launch()` rechaza con "rejected" los comandos fuera de la lista blanca (no "unavailable"). Tests corregidos.
-10. Diagnóstico de CI ilegible (logs 403): los tres jobs (tests, package, iso-build) publican ahora su diagnóstico en un issue al fallar; iso-build lo hace vía API con curl porque gh no existe en el contenedor Arch.
+1. Cooldown del NKEngine a t=0 bloqueaba toda acción automática al arrancar.
+2. defaults.json empaquetado desactualizado (0.2.0-beta): nexora health fallaba en CI.
+3. Muestreo degradado de PSI en test_nke escribía después de leer.
+4. profiledef.sh con bloque INI inválido: sustituido por buildmodes=('iso').
+5. Validación de mkarchiso: uefi.systemd no existe (uefi.systemd-boot); faltaban syslinux, syslinux.cfg, efiboot/loader/entries.
+6. mkarchiso no puede montar proc sin contenedor privilegiado: options: --privileged.
+7. pacman abortaba por *.db.sig 404: SigLevel = Required DatabaseOptional (estándar releng).
+8. Tests desalineados con la API real (intensity_policy devuelve dict; launch rechaza con "rejected"): tests corregidos.
+9. Diagnóstico de CI ilegible: los tres jobs publican issues al fallar (iso-build vía curl).
 
-## 3. Estado por área
+## 3. Estado por área (beta 0.4.0)
 
-- Nexora Desktop: modelos completos con datos reales y estados explícitos; vista GTK3 implementada, no ejecutada visualmente.
-- Modos oficiales: cinco modos con intensidades 1/2/3/full respaldadas por LevelPolicy reales; agentes específicos de cada modo pendientes (estado declarado: stub).
-- NKE: motor, categorías A/B/C, rollback, API de aprobación; sin verificación en host real.
-- Watchdog: 4 componentes, diagnóstico sin efectos, anti-bucle.
-- Seguridad: auditoría defensiva de solo lectura; interfaz sin root; lista blanca de comandos; sin ejecución de comandos generados por modelos.
+- Core, Coordinator, modos oficiales con intensidades reales: funcionales y probados en CI.
+- NKE: motor, categorías A/B/C, rollback, API de aprobación: funcionales; sin verificación en host real.
+- Watchdog y daemons systemd endurecidos: funcionales; sin verificación en host real.
+- Nexora Desktop: Shell, Dashboard, Mode Center, NKE Control, Hub y System Center completos con datos reales y estados explícitos; System Center incluye usuarios (solo lectura), actualizaciones pendientes (pacman -Qu) y actualización del sistema vía pkexec con lista cerrada.
+- Vista GTK3: implementada, no ejecutada visualmente.
+- Seguridad: sin root, listas blancas, auditoría defensiva de solo lectura, bandit/pip-audit/gitleaks en CI, release solo manual.
 
-## 4. Limitaciones y pendientes
+## 4. Pendientes declaradas (fuera de la beta o post-beta)
 
-- Confirmar el run de CI con la construcción completa de la ISO; el tag v0.4.0 no se crea hasta tener CI verde.
-- eBPF: detección y degradación declarada; programas eBPF concretos pendientes.
-- cgroups/renice aplicados en vivo: requiere host real.
-- Pruebas contra Ollama/llama.cpp reales: validado con transporte falso que replica sus APIs.
+- Arranque de la ISO en QEMU o hardware (requiere entorno con KVM o máquina física).
+- Verificación del NKE, watchdog y unidades systemd en host real.
+- eBPF: programas concretos (hoy: detección y degradación declarada).
+- Edición de cuentas de usuario y gestión de servicios con polkit (fuera de la beta).
+- Pruebas contra Ollama/llama.cpp reales.
 - ZIP obsoleto NEXORA_OS_BETA_0.2.zip en la raíz del repositorio: el conector no permite borrar archivos; borrado manual pendiente.
-- Issues de diagnóstico de CI (1-39) abiertos: se cerrarán cuando la CI esté completamente verde.
+- Consumo en reposo: sin medir; no se publican cifras.
+- Primer tag v0.4.0-beta una vez confirmado el workflow de seguridad en verde.

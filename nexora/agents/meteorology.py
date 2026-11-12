@@ -1,14 +1,14 @@
-"""Agente meteorolÃ³gico.
+"""Agente meteorológico.
 
 Proveedores:
-  - ``SimulatedWeatherProvider`` (por defecto): datos de demostraciÃ³n, sin red.
+  - ``SimulatedWeatherProvider`` (por defecto): datos de demostración, sin red.
     Marcados siempre con ``simulated: True``.
   - ``OpenMeteoProvider``: observaciones reales de Open-Meteo (sin API key).
-    Solo se usa si el usuario lo activa (``--live`` o config), porque envÃ­a el
-    nombre de la ubicaciÃ³n a un servicio externo.
+    Solo se usa si el usuario lo activa (``--live`` o config), porque envía el
+    nombre de la ubicación a un servicio externo.
 
-AtribuciÃ³n: Open-Meteo exige citar la fuente (CC BY 4.0).
-AEMET OpenData NO estÃ¡ implementado (requiere API key; irÃ­a en el vault).
+Atribución: Open-Meteo exige citar la fuente (CC BY 4.0).
+AEMET OpenData NO está implementado (requiere API key; iría en el vault).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, Optional
 
 from nexora.agents.base import BaseAgent
 
-# CÃ³digos WMO de "weather_code" (los que usa Open-Meteo).
+# Códigos WMO de "weather_code" (los que usa Open-Meteo).
 WMO_CODES_ES = {
     0: "Despejado", 1: "Mayormente despejado", 2: "Parcialmente nublado", 3: "Nublado",
     45: "Niebla", 48: "Niebla con escarcha",
@@ -54,18 +54,23 @@ class SimulatedWeatherProvider:
             "observed_at": None,
             "source": "simulated",
             "simulated": True,
-            "attribution": "Datos simulados de demostraciÃ³n; no son observaciones reales.",
+            "attribution": "Datos simulados de demostración; no son observaciones reales.",
         }
 
 
 def _fetch_json(url: str, params: dict, timeout: float) -> dict:
     full = f"{url}?{urllib.parse.urlencode(params)}"
+    # Validación de esquema: solo https. Banda B310 de bandit cubierta con
+    # validación explícita + nosec justificado.
+    if not full.startswith("https://"):
+        raise WeatherProviderError("Solo se permiten URLs https")
     req = urllib.request.Request(full, headers={"User-Agent": "NEXORA-OS/0.2"})
     try:
+        # nosec B310: el esquema https se valida explícitamente arriba.
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise WeatherProviderError(f"Fallo de red o respuesta invÃ¡lida: {exc}") from exc
+        raise WeatherProviderError(f"Fallo de red o respuesta inválida: {exc}") from exc
 
 
 class OpenMeteoProvider:
@@ -82,7 +87,7 @@ class OpenMeteoProvider:
         geo = self._fetch(self.GEOCODING_URL, {"name": location, "count": 1, "language": "es", "format": "json"})
         results = geo.get("results") or []
         if not results:
-            raise WeatherProviderError(f"UbicaciÃ³n no encontrada: {location}")
+            raise WeatherProviderError(f"Ubicación no encontrada: {location}")
         place = results[0]
 
         data = self._fetch(
@@ -91,7 +96,7 @@ class OpenMeteoProvider:
         )
         cur = data.get("current")
         if not cur or "temperature_2m" not in cur:
-            raise WeatherProviderError("Open-Meteo no devolviÃ³ condiciones actuales")
+            raise WeatherProviderError("Open-Meteo no devolvió condiciones actuales")
 
         resolved = ", ".join(p for p in (place.get("name"), place.get("admin1"), place.get("country")) if p)
         code = cur.get("weather_code")
@@ -101,7 +106,7 @@ class OpenMeteoProvider:
             "temp_c": cur["temperature_2m"],
             "humidity_pct": cur.get("relative_humidity_2m"),
             "wind_kmh": cur.get("wind_speed_10m"),
-            "condition": WMO_CODES_ES.get(code, f"CÃ³digo WMO {code}"),
+            "condition": WMO_CODES_ES.get(code, f"Código WMO {code}"),
             "observed_at": cur.get("time"),
             "source": "Open-Meteo",
             "simulated": False,
@@ -117,14 +122,14 @@ class MeteorologyAgent(BaseAgent):
             name="MeteorologyAgent",
             mode="meteorology",
             engine=engine,
-            system_context="Modo MeteorologÃ­a Aislado",
+            system_context="Modo Meteorología Aislado",
         )
         self.provider = provider or SimulatedWeatherProvider()
 
     def get_weather_observation(self, location: str) -> Dict[str, Any]:
-        """ObservaciÃ³n con fuente y atribuciÃ³n explÃ­citas; se guarda solo en la memoria de este modo."""
+        """Observación con fuente y atribución explícitas; se guarda solo en la memoria de este modo."""
         if not isinstance(location, str) or not location.strip():
-            raise ValueError("La ubicaciÃ³n no puede estar vacÃ­a")
+            raise ValueError("La ubicación no puede estar vacía")
         location = location.strip()
         obs = self.provider.observe(location)
         self.remember(f"last_query_{location}", obs)

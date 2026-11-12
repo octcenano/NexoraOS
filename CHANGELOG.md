@@ -1,11 +1,12 @@
 # Changelog
 
-## Beta 0.4.0: cierre de beta y procesos (2026-11-11)
+## Beta 0.4.0: cierre de beta y procesos (2026-11-12)
 
 ### CI/CD
-- CI completamente verde: tests (248), lint (ShellCheck, bash -n, gitleaks), package (wheel) e iso-build (ISO real construida en el contenedor archlinux:base privilegiado, runs 40 y 41).
-- Diagnóstico de fallos legible: los tres jobs de CI publican un issue con los logs al fallar; iso-build lo hace vía API con curl porque gh no existe en el contenedor Arch. Los 39 issues de diagnóstico generados durante la depuración están cerrados.
-- Nuevo workflow de seguridad (`.github/workflows/security.yml`): bandit (análisis estático), pip-audit (vulnerabilidades en dependencias, semanal y en cada push) y gitleaks sobre el historial completo (secretos). Cada hallazgo se publica como issue.
+- CI verde con la suite ampliada: tests (257), lint (ShellCheck, bash -n, gitleaks), package (wheel) e iso-build (ISO real construida en el contenedor archlinux:base privilegiado; runs 40 a 42). Los runs posteriores al fix de meteorología quedaron en cola por saturación de runners del plan gratuito; el estado exacto por run se mantiene en docs/QA_REPORT.md.
+- Corregida la última incidencia de tests: la expectativa de meteorología contenía doble codificación UTF-8 (CÃ³digo) y no coincidía con la salida correcta del proveedor (Código); corregido el test en 8643187 tras corregir el motor en e24b5c0.
+- Diagnóstico de fallos legible: los tres jobs de CI publican un issue con los logs al fallar; iso-build lo hace vía API con curl porque gh no existe en el contenedor Arch. Los issues de diagnóstico generados durante la depuración están cerrados.
+- Nuevo workflow de seguridad (`.github/workflows/security.yml`): bandit (análisis estático), pip-audit (vulnerabilidades en dependencias, semanal y en cada push) y gitleaks sobre el historial completo (secretos). Cada hallazgo se publica como issue. Los tres análisis están en verde (runs 10 y 11): sin hallazgos de bandit ni gitleaks y sin vulnerabilidades conocidas en dependencias, tras excluir el paquete local nexora-os del freeze (no está publicado en PyPI) y auditar el resto con --no-deps.
 - Nuevo workflow de release (`.github/workflows/release.yml`): al crear un tag v* construye el wheel y la ISO, genera el sha256 y crea un release borrador con ambos. La publicación es manual: nadie publica una beta sin revisión.
 
 ### Nexora System Center (secciones completadas)

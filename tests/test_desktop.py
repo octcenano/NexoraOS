@@ -19,7 +19,7 @@ from nexora.desktop.hub import NexoraHub
 from nexora.desktop.mode_center import ModeCenter
 from nexora.desktop.nke_control import NKEControl
 from nexora.desktop.shell import ApplicationIndex, GlobalSearch, PANEL_LAYOUT, workspaces
-from nexora.desktop.system_center import SECTIONS, SystemCenter
+from nexora.desktop.system_center import PRIVILEGED_ACTIONS, SECTIONS, SystemCenter, list_users, pending_updates
 
 
 def write_desktop(path: Path, name: str, exec_name: str, categories: str = "Utility",
@@ -224,6 +224,12 @@ class SystemCenterTests(unittest.TestCase):
                 self.assertIn(entry["state"],
                               ("available", "unavailable", "not_implemented"))
 
+    def test_sections_include_readonly_data(self):
+        sections = SystemCenter().sections()
+        self.assertEqual(sections["users"]["data"]["state"], "ok")
+        self.assertIn(sections["updates"]["data"]["state"],
+                      ("ok", "unavailable", "error"))
+
     def test_launch_whitelist(self):
         import shutil
         sc = SystemCenter()
@@ -244,6 +250,68 @@ class SystemCenterTests(unittest.TestCase):
     def test_launch_disabled_context(self):
         sc = SystemCenter(allow_launch=False)
         self.assertEqual(sc.launch("thunar")["state"], "rejected")
+
+    def test_list_users_reads_real_passwd(self):
+        res = list_users()
+        self.assertEqual(res["state"], "ok")
+        self.assertTrue(any(u["uid"] == 0 for u in res["humans"]))
+        for u in res["humans"]:
+            self.assertNotIn(";", u["name"])
+
+    def test_list_users_with_fake_passwd(self):
+        tmp = tempfile.mkdtemp()
+        passwd = Path(tmp) / "passwd"
+        passwd.write_text(
+            "root:x:0:0:root:/root:/bin/bash\n"
+            "alice:x:1000:1000:Alice:/home/alice:/bin/zsh\n"
+            "daemon:x:2:2:daemon:/sbin:/usr/bin/nologin\n"
+            "malo:x:no-es-numERO:x::/x:/bin/sh\n",
+            encoding="utf-8",
+        )
+        res = list_users(passwd_path=str(passwd))
+        self.assertEqual(res["state"], "ok")
+        names = {u["name"] for u in res["humans"]}
+        self.assertEqual(names, {"root", "alice"})
+        self.assertEqual(res["system_count"], 1)
+
+    def test_pending_updates_without_pacman_is_unavailable(self):
+        tmp = tempfile.mkdtemp()
+        res = pending_updates(pacman_path=str(Path(tmp) / "no-existe"))
+        self.assertEqual(res["state"], "unavailable")
+
+    def test_pending_updates_parses_output(self):
+        tmp = tempfile.mkdtemp()
+        fake = Path(tmp) / "pacman"
+        fake.write_text("#!/bin/sh\necho 'linux 6.1 -> 6.2'\necho 'bash 5.1 -> 5.2'\nexit 0\n",
+                        encoding="utf-8")
+        fake.chmod(0o755)
+        res = pending_updates(pacman_path=str(fake))
+        self.assertEqual(res["state"], "ok")
+        self.assertEqual(res["count"], 2)
+        self.assertEqual(res["packages"], ["linux", "bash"])
+
+    def test_privileged_actions_catalog(self):
+        res = SystemCenter().privileged_actions()
+        self.assertEqual(res["state"], "ok")
+        names = {a["name"] for a in res["actions"]}
+        self.assertEqual(names, set(PRIVILEGED_ACTIONS))
+        for action in res["actions"]:
+            self.assertIn(action["state"], ("available", "unavailable"))
+
+    def test_launch_privileged_rejects_unknown(self):
+        self.assertEqual(SystemCenter().launch_privileged("rm -rf /")["state"], "rejected")
+        self.assertEqual(SystemCenter().launch_privileged("format_disk")["state"], "rejected")
+
+    def test_launch_privileged_disabled_context(self):
+        sc = SystemCenter(allow_launch=False)
+        self.assertEqual(sc.launch_privileged("system_update")["state"], "rejected")
+
+    def test_launch_privileged_without_pkexec_is_unavailable(self):
+        import shutil
+        if shutil.which("pkexec") is not None:
+            self.skipTest("pkexec está instalado: no se prueba el fallo")
+        self.assertEqual(SystemCenter().launch_privileged("system_update")["state"],
+                         "unavailable")
 
 
 class AppTests(unittest.TestCase):

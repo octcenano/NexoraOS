@@ -60,14 +60,12 @@ class SimulatedWeatherProvider:
 
 def _fetch_json(url: str, params: dict, timeout: float) -> dict:
     full = f"{url}?{urllib.parse.urlencode(params)}"
-    # Validación de esquema: solo https. Banda B310 de bandit cubierta con
-    # validación explícita + nosec justificado.
+    # Validación de esquema: solo https (mitiga B310/CWE-22 de bandit).
     if not full.startswith("https://"):
         raise WeatherProviderError("Solo se permiten URLs https")
     req = urllib.request.Request(full, headers={"User-Agent": "NEXORA-OS/0.2"})
     try:
-        # nosec B310: el esquema https se valida explícitamente arriba.
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310: esquema https validado arriba
             return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         raise WeatherProviderError(f"Fallo de red o respuesta inválida: {exc}") from exc

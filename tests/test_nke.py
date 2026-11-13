@@ -15,7 +15,7 @@ from nexora.nke.capabilities import detect_capabilities
 from nexora.nke.engine import NKEngine
 from nexora.nke.history import NKEHistory
 from nexora.nke.monitor import NKMonitor, read_meminfo, top_processes
-from nexora.nke.policy import CATEGORY_A, CATEGORY_B, CATEGORY_C, ACTION_CATALOG, PolicyEngine
+from nexora.nke.policy import CATEGORY_A, CATEGORY_B, CATEGORY_C, ACTION_CATALOG, Action, PolicyEngine
 from nexora.nke.safety import Executor, SafetyController, SafetyViolation
 
 
@@ -177,6 +177,14 @@ class AnalyzerTests(unittest.TestCase):
         mp = next(x for x in f if x["kind"] == "memory_pressure")
         self.assertEqual(mp["params"]["memory.max"], "3.8G")   # 25% de 15625 MB
 
+    def test_presion_de_cpu_adjunta_procesos_top(self):
+        """El hallazgo de CPU incluye los procesos top: deprioritize necesita un pid real."""
+        tops = [{"pid": 7, "comm": "juego", "cpu_ticks": 900}]
+        f = analyze(self._sample(psi={"cpu": {"some": 50.0}, "memory": {"some": 0.0}, "io": {"some": 0.0"}},
+                                 top_processes=tops))
+        cp = next(x for x in f if x["kind"] == "cpu_pressure")
+        self.assertEqual(cp["top_processes"], tops)
+
     def test_thrashing_de_swap(self):
         f = analyze(self._sample(
             psi={"memory": {"some": 40.0}, "cpu": {"some": 0.0}, "io": {"some": 0.0}},
@@ -232,6 +240,42 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(d[CATEGORY_B], [])
         self.assertEqual(d[CATEGORY_A], [])
 
+    def test_carga_de_modulo_no_se_propone_por_no_estar_implementada(self):
+        """Cargar módulos del kernel es privilegiado y sin implementación: nunca se propone."""
+        findings = [{"kind": "x", "severity": "info", "detail": "y", "suggests": ["load_kernel_module"]}]
+        d = self.pe.decide(findings)
+        self.assertEqual([a.kind for a in d[CATEGORY_C]], [])
+        self.assertEqual([a for a in d[CATEGORY_A]], [])
+        self.assertEqual([a for a in d[CATEGORY_B]], [])
+        self.assertFalse(ACTION_CATALOG["load_kernel_module"]["implemented"])
+        self.assertEqual(ACTION_CATALOG["load_kernel_module"]["category"], CATEGORY_C)
+
+    def test_deprioritize_sin_pid_real_no_se_propone(self):
+        """Sin procesos top en el hallazgo no hay pid: no se renicea un objetivo simbólico."""
+        findings = [{"kind": "cpu_pressure", "severity": "warning", "detail": "x",
+                     "suggests": ["deprioritize_secondary"]}]
+        d = self.pe.decide(findings)
+        self.assertEqual(d[CATEGORY_A], [])
+
+    def test_deprioritize_con_pid_real_se_propone(self):
+        findings = [{"kind": "cpu_pressure", "severity": "warning", "detail": "x",
+                     "top_processes": [{"pid": 7, "comm": "juego", "cpu_ticks": 900}],
+                     "suggests": ["deprioritize_secondary"]}]
+        d = self.pe.decide(findings)
+        self.assertEqual([a.kind for a in d[CATEGORY_A]], ["deprioritize_secondary"])
+        self.assertEqual(d[CATEGORY_A][0].target, "7")
+
+    def test_peticion_de_perfil_prevalece_sobre_hallazgo(self):
+        """La petición de perfil aporta los pids: la deduplicación conserva sus parámetros."""
+        findings = [{"kind": "memory_pressure", "severity": "warning", "detail": "x",
+                     "params": {"memory.max": "2G"},
+                     "suggests": ["pause_secondary_agents"]}]
+        reqs = [{"kind": "pause_secondary_agents", "mode": "gaming", "params": {"pids": [4242]}}]
+        d = self.pe.decide(findings, reqs)
+        pausas = [a for a in d[CATEGORY_B] if a.kind == "pause_secondary_agents"]
+        self.assertEqual(len(pausas), 1)
+        self.assertEqual(pausas[0].params.get("pids"), [4242])
+
     def test_capacidad_ausente_no_genera_accion(self):
         self.pe.caps["can_cgroup_limits"] = False
         findings = [{"kind": "memory_pressure", "severity": "warning", "detail": "x",
@@ -239,12 +283,6 @@ class PolicyTests(unittest.TestCase):
                      "suggests": ["reduce_agent_ram"]}]
         d = self.pe.decide(findings)
         self.assertEqual(d[CATEGORY_A], [])
-
-    def test_carga_de_modulo_es_propuesta_protegida(self):
-        findings = [{"kind": "x", "severity": "info", "detail": "y", "suggests": ["load_kernel_module"]}]
-        d = self.pe.decide(findings)
-        self.assertEqual([a.kind for a in d[CATEGORY_C]], ["load_kernel_module"])
-        self.assertEqual([a for a in d[CATEGORY_A]], [])
 
     def test_deduplicacion(self):
         findings = [
@@ -302,6 +340,14 @@ class SafetyTests(unittest.TestCase):
             sc.apply(action)
         self.assertEqual(fx.renices, [])
 
+    def test_renice_con_objetivo_no_numerico_se_rechaza(self):
+        fx = FakeExecutor()
+        sc = SafetyController(executor=fx)
+        action = Action("deprioritize_secondary", CATEGORY_A, True, "agentes-nexora", {"nice": 10}, "prueba")
+        with self.assertRaises(SafetyViolation):
+            sc.apply(action)
+        self.assertEqual(fx.renices, [])
+
     def test_cgroup_limit_real_con_ejecutor(self):
         fx = FakeExecutor()
         sc = SafetyController(executor=fx, cgroup_base="/sys/fs/cgroup")
@@ -330,13 +376,14 @@ class SafetyTests(unittest.TestCase):
         sc.rollback(outcome["rollback"])
         self.assertIn(("/sys/fs/cgroup/nexora.slice/memory.max", "max"), fx.writes)
 
-    def test_cgroup_sin_parametros_se_rechaza(self):
+    def test_cgroup_sin_parametros_se_rechaza_sin_efectos(self):
         fx = FakeExecutor()
         sc = SafetyController(executor=fx)
         action = Action("reduce_agent_ram", CATEGORY_A, True, "nexora.slice", {}, "límite vacío")
         with self.assertRaises(SafetyViolation):
             sc.apply(action)
         self.assertEqual(fx.writes, [])
+        self.assertEqual(fx.mkdirs, [])   # ni siquiera se crea el slice
 
     def test_governor_restaura_el_previo_real(self):
         """No se asume "schedutil": se restaura el gobernador que había."""

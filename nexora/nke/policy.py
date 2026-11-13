@@ -34,7 +34,7 @@ ACTION_CATALOG: Dict[str, Dict[str, Any]] = {
     "deprioritize_secondary": {"category": CATEGORY_A, "reversible": True, "implemented": True,
                                "description": "Renice de procesos secundarios bajo presión de CPU"},
     "throttle_secondary_io": {"category": CATEGORY_B, "reversible": True, "implemented": True,
-                              "description": "Límites de E/S (io.max) para el slice de nexora"},
+                             "description": "Límites de E/S (io.max) para el slice de nexora"},
     "set_governor": {"category": CATEGORY_B, "reversible": True, "implemented": True,
                      "description": "Cambiar el gobernador de cpufreq (afecta a todo el sistema)"},
     "set_swappiness": {"category": CATEGORY_B, "reversible": True, "implemented": True,
@@ -75,18 +75,24 @@ class PolicyEngine:
         - Categoría A: aplicables automáticamente.
         - Categoría B: requieren aprobación (se devuelven listas para el usuario).
         - Categoría C: nunca se ejecutan; se devuelven como propuesta documentada.
+
+        Las peticiones de perfil se procesan ANTES que los hallazgos: la
+        intención explícita del usuario prevalece y, al ir primero, la
+        deduplicación conserva sus parámetros (p. ej. los pids concretos de
+        pause_secondary_agents en lugar de los del hallazgo genérico).
         """
         result: Dict[str, List[Action]] = {CATEGORY_A: [], CATEGORY_B: [], CATEGORY_C: []}
-        for f in findings:
-            for kind in f.get("suggests", []):
-                action = self._action_for(kind, f, primary_mode)
-                if action is not None:
-                    result[action.category].append(action)
 
         for req in profile_requests or []:
             action = self._action_for(req.get("kind", ""), req, primary_mode, from_profile=True)
             if action is not None:
                 result[action.category].append(action)
+
+        for f in findings:
+            for kind in f.get("suggests", []):
+                action = self._action_for(kind, f, primary_mode)
+                if action is not None:
+                    result[action.category].append(action)
 
         # Deduplicación por (kind, target) conservando orden de prioridad.
         for cat in result:
@@ -110,6 +116,12 @@ class PolicyEngine:
             return None
         cat = spec["category"]
         target = self._target_for(kind, source)
+
+        # renice y deprioritize exigen un pid concreto: sin proceso real
+        # identificado no hay acción (nunca se renicea un objetivo simbólico).
+        if kind in ("renice_agent", "deprioritize_secondary") and not str(target).isdigit():
+            return None
+
         params = dict(source.get("params", {}))
 
         # Un límite de cgroup sin parámetros concretos no es una acción: sería
@@ -128,9 +140,6 @@ class PolicyEngine:
             return None
         if kind == "set_governor" and not self.caps.get("can_cpufreq_tuning"):
             return None
-        if kind in ("renice_agent", "deprioritize_secondary") and not (source.get("top_processes") or source.get("suggests")):
-            if kind == "renice_agent":
-                return None
         return action
 
     @staticmethod

@@ -37,6 +37,7 @@ def analyze(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
     psi = sample.get("psi") or {}
     mem = sample.get("mem") or {}
     load = sample.get("load")
+    top = sample.get("top_processes") or []
 
     mem_avg = (psi.get("memory") or {}).get("some")
     if mem_avg is not None and mem_avg >= MEM_PRESSURE_WARN:
@@ -69,6 +70,9 @@ def analyze(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
         findings.append({
             "kind": "cpu_pressure", "severity": "warning",
             "detail": f"presión de CPU (PSI some avg10 = {cpu_avg}%)",
+            # El objetivo de deprioritize_secondary exige un pid real: se
+            # adjuntan los procesos top para que la política fije el objetivo.
+            "top_processes": top,
             "suggests": ["deprioritize_secondary", "pause_secondary_agents"],
         })
 
@@ -87,7 +91,6 @@ def analyze(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
             "suggests": ["deprioritize_secondary"],
         })
 
-    top = sample.get("top_processes") or []
     if top and cpu_avg is not None and cpu_avg >= CPU_PRESSURE_WARN and top[0]["cpu_ticks"] > 0:
         findings.append({
             "kind": "dominant_process", "severity": "info",

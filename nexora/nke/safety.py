@@ -110,10 +110,17 @@ class SafetyController:
         rollback = self._apply(action)
         return {"applied": True, "kind": action.kind, "target": action.target, "rollback": rollback}
 
+    @staticmethod
+    def _pid_or_violation(kind: str, raw: Any) -> int:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise SafetyViolation(f"pid no válido para {kind}: {raw!r} (se esperaba un pid numérico)")
+
     def _apply(self, action: Action) -> Dict[str, Any]:
         kind = action.kind
         if kind in ("renice_agent", "deprioritize_secondary"):
-            pid = int(action.target)
+            pid = self._pid_or_violation(kind, action.target)
             nice = int(action.params.get("nice", 10))
             previous = self.exec.getnice(pid)
             if previous is None:
@@ -124,6 +131,13 @@ class SafetyController:
             return {"kind": "restore_nice", "pid": pid, "nice": previous}
 
         if kind in ("cgroup_limit", "reduce_agent_ram", "throttle_secondary_io"):
+            # Validación antes de cualquier efecto: un límite vacío no crea
+            # el slice ni escribe nada.
+            if not any(k in action.params for k in CGROUP_KEYS):
+                raise SafetyViolation(
+                    "sin parámetros de límite reconocidos (cpu.max, memory.max, io.max): "
+                    "no se aplica un límite vacío"
+                )
             self.exec.mkdir(self.nexora_slice)
             previous: Dict[str, str] = {}
             for key in CGROUP_KEYS:
@@ -136,11 +150,6 @@ class SafetyController:
                 # captura y se restaura tal cual, nunca se asume.
                 previous[key] = current if current is not None else CGROUP_DEFAULT
                 self.exec.write_sys(path, str(action.params[key]))
-            if not previous:
-                raise SafetyViolation(
-                    "sin parámetros de límite reconocidos (cpu.max, memory.max, io.max): "
-                    "no se aplica un límite vacío"
-                )
             return {"kind": "restore_cgroup", "slice": self.nexora_slice, "previous": previous}
 
         if kind == "set_governor":
@@ -171,9 +180,12 @@ class SafetyController:
             return {"kind": "restore_swappiness", "path": path, "value": current}
 
         if kind == "pause_secondary_agents":
-            for pid in action.params.get("pids", []):
-                self.exec.signal(int(pid), 19)  # SIGSTOP
-            return {"kind": "resume_agents", "pids": list(action.params.get("pids", []))}
+            pids = []
+            for raw in action.params.get("pids", []):
+                pid = self._pid_or_violation(kind, raw)
+                self.exec.signal(pid, 19)  # SIGSTOP
+                pids.append(pid)
+            return {"kind": "resume_agents", "pids": pids}
 
         raise SafetyViolation(f"acción '{kind}' sin implementación segura conocida")
 

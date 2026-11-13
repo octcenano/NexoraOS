@@ -39,10 +39,12 @@ class NKEControl:
                 "note": "sin programa eBPF cargado: degradación segura a monitorización en espacio de usuario",
             },
             "cycles": st["cycles"],
-            "policies": {kind: spec["category"] for kind, spec in ACTION_CATALOG.items()},
+            "policies": {kind: {"category": spec["category"], "implemented": spec.get("implemented", True)}
+                         for kind, spec in ACTION_CATALOG.items()},
             "pending_supervised": self.pending(),
             "history_summary": st["history_summary"],
             "last_rollback": st["last_rollback"],
+            "modifications": st.get("modifications"),
             "footprint": footprint,
         }
 
@@ -58,12 +60,16 @@ class NKEControl:
                 for a in self.engine.last_supervised()]
 
     def explain(self, kind: str) -> Dict[str, Any]:
-        """Explicación de una política: categoría, reversibilidad y descripción."""
+        """Explicación de una política: categoría, reversibilidad, implementación."""
         spec = ACTION_CATALOG.get(kind)
         if spec is None:
             return {"state": "error", "message": "acción desconocida: " + str(kind)}
-        return {"state": "ok", "kind": kind, "category": spec["category"],
-                "reversible": spec["reversible"], "description": spec["description"]}
+        out = {"state": "ok", "kind": kind, "category": spec["category"],
+               "reversible": spec["reversible"], "description": spec["description"]}
+        if not spec.get("implemented", True):
+            out["state"] = "unavailable"
+            out["message"] = "acción declarada en el catálogo pero sin implementación segura"
+        return out
 
     def approve(self, kind: str, target: str) -> Dict[str, Any]:
         """Aprueba una acción supervisada pendiente. Rechaza lo desconocido o protegido."""
@@ -85,6 +91,12 @@ class NKEControl:
             return self.engine.undo_last()
         except ValueError as exc:
             return {"state": "no_data", "message": str(exc)}
+        except OSError as exc:
+            return {"state": "error", "message": str(exc)}
+
+    def modifications(self) -> List[Dict[str, Any]]:
+        """Estado de cada modificación: id, ciclo, acción y estado."""
+        return self.engine.modifications()
 
     def history(self) -> Dict[str, Any]:
         return {"state": "ok", "events": list(self.engine.history.events())}

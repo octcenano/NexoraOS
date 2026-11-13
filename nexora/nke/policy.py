@@ -5,6 +5,9 @@ Cada acción pertenece a una categoría:
   B (supervisada): se prepara y valida, pero exige aprobación del usuario.
   C (protegida): nunca se ejecuta desde NKE; solo se documenta/propone.
 
+Cada entrada del catálogo declara si está implementada ("implemented"): una
+acción sin implementación segura nunca se propone ni se aprueba.
+
 Los conflictos entre perfiles se resuelven con prioridades explícitas: el
 modo primario gana y existen límites globales (RAM reservable <= 80%).
 """
@@ -18,31 +21,34 @@ CATEGORY_A = "automatic"
 CATEGORY_B = "supervised"
 CATEGORY_C = "protected"
 
-# Acciones conocidas: kind -> (categoría, reversible, descripción)
+# Acciones conocidas: kind -> categoría, reversible, implementada, descripción
 ACTION_CATALOG: Dict[str, Dict[str, Any]] = {
-    "renice_agent": {"category": CATEGORY_A, "reversible": True,
+    "renice_agent": {"category": CATEGORY_A, "reversible": True, "implemented": True,
                      "description": "Bajar prioridad (nice) de procesos de agentes secundarios"},
-    "cgroup_limit": {"category": CATEGORY_A, "reversible": True,
+    "cgroup_limit": {"category": CATEGORY_A, "reversible": True, "implemented": True,
                      "description": "Fijar cpu.max/memory.max del slice de nexora (cgroups v2)"},
-    "reduce_agent_ram": {"category": CATEGORY_A, "reversible": True,
+    "reduce_agent_ram": {"category": CATEGORY_A, "reversible": True, "implemented": True,
                          "description": "Reducir el límite de RAM de los agentes en el slice"},
-    "pause_secondary_agents": {"category": CATEGORY_B, "reversible": True,
+    "pause_secondary_agents": {"category": CATEGORY_B, "reversible": True, "implemented": True,
                                "description": "Congelar (SIGSTOP) procesos de agentes secundarios"},
-    "deprioritize_secondary": {"category": CATEGORY_A, "reversible": True,
+    "deprioritize_secondary": {"category": CATEGORY_A, "reversible": True, "implemented": True,
                                "description": "Renice de procesos secundarios bajo presión de CPU"},
-    "throttle_secondary_io": {"category": CATEGORY_B, "reversible": True,
+    "throttle_secondary_io": {"category": CATEGORY_B, "reversible": True, "implemented": True,
                               "description": "Límites de E/S (io.max) para el slice de nexora"},
-    "set_governor": {"category": CATEGORY_B, "reversible": True,
+    "set_governor": {"category": CATEGORY_B, "reversible": True, "implemented": True,
                      "description": "Cambiar el gobernador de cpufreq (afecta a todo el sistema)"},
-    "set_swappiness": {"category": CATEGORY_B, "reversible": True,
+    "set_swappiness": {"category": CATEGORY_B, "reversible": True, "implemented": True,
                        "description": "Cambiar vm.swappiness (afecta a todo el sistema)"},
-    "change_dns": {"category": CATEGORY_B, "reversible": True,
-                   "description": "Cambiar la configuración DNS del sistema"},
-    "load_kernel_module": {"category": CATEGORY_C, "reversible": False,
+    "change_dns": {"category": CATEGORY_B, "reversible": True, "implemented": False,
+                   "description": "Cambiar la configuración DNS del sistema (requiere NetworkManager "
+                                  "y privilegios: sin implementación segura, no se propone ni se aprueba)"},
+    "load_kernel_module": {"category": CATEGORY_C, "reversible": False, "implemented": False,
                            "description": "Cargar un módulo del kernel (modprobe): operación privilegiada"},
-    "kernel_cmdline": {"category": CATEGORY_C, "reversible": False,
+    "kernel_cmdline": {"category": CATEGORY_C, "reversible": False, "implemented": False,
                        "description": "Cambiar parámetros de arranque"},
 }
+
+CGROUP_PARAM_KEYS = ("cpu.max", "memory.max", "io.max")
 
 
 @dataclass(frozen=True)
@@ -98,9 +104,20 @@ class PolicyEngine:
         spec = ACTION_CATALOG.get(kind)
         if spec is None:
             return None
+        # Una acción sin implementación segura nunca se propone: el usuario
+        # no puede aprobar algo que el Safety Controller no sabe ejecutar.
+        if not spec.get("implemented", True):
+            return None
         cat = spec["category"]
         target = self._target_for(kind, source)
         params = dict(source.get("params", {}))
+
+        # Un límite de cgroup sin parámetros concretos no es una acción: sería
+        # una aplicación vacía que simulaba éxito sin escribir nada.
+        if kind in ("cgroup_limit", "reduce_agent_ram", "throttle_secondary_io") \
+                and not any(k in params for k in CGROUP_PARAM_KEYS):
+            return None
+
         why = source.get("detail", "petición de perfil") if not from_profile else \
             f"perfil '{source.get('mode', '?')}' solicita '{kind}'"
         action = Action(kind=kind, category=cat, reversible=spec["reversible"],

@@ -4,7 +4,14 @@ Protecciones integradas:
   - Anti-bucle: máximo de acciones por ciclo y cooldown por objetivo, de modo
     que NKE no puede entrar en ciclos de optimización constantes.
   - Detección de degradación: si tras aplicar una acción el hallazgo que la
-    motivó empeora, se revierte automáticamente lo aplicado en ese ciclo.
+    motivó empeora, se revierte automáticamente SOLO lo aplicado en ese
+    ciclo; los ajustes de ciclos anteriores nunca se tocan.
+  - Registro de modificaciones con identificador único y estado explícito
+    (applied / reverted / failed): cada rollback está asociado a su
+    modificación original y no puede revertir dos veces lo mismo.
+  - Restauración exacta: el Safety Controller captura el valor real previo a
+    cada escritura y lo restaura con verificación; nunca asume valores por
+    defecto (nice 0, cgroup "max", governor "schedutil").
   - Huella propia: se mide la duración de cada ciclo; el intervalo de sondeo
     lo controla el Monitor (aumenta en reposo).
   - Categoría C: registrada como propuesta, nunca ejecutada.
@@ -27,6 +34,11 @@ from nexora.nke.safety import SafetyController
 
 MAX_ACTIONS_PER_CYCLE = 3
 TARGET_COOLDOWN_S = 300.0
+MAX_MODIFICATIONS = 500
+
+MOD_APPLIED = "applied"
+MOD_REVERTED = "reverted"
+MOD_FAILED = "failed"
 
 
 class NKEngine:
@@ -50,8 +62,49 @@ class NKEngine:
         self.history = NKEHistory()
         self._last_applied: Dict[str, float] = {}   # "kind|target" -> timestamp
         self._cycles = 0
-        self._active_rollbacks: List[Dict[str, Any]] = []
+        self._mod_seq = 0
+        self._modifications: List[Dict[str, Any]] = []
         self._last_supervised: List[Action] = []
+
+    # -- registro de modificaciones -------------------------------------------
+    def _register(self, cycle_no: int, action: Action, rollback: Dict[str, Any]) -> Dict[str, Any]:
+        self._mod_seq += 1
+        mod = {
+            "id": f"nke-{cycle_no}-{self._mod_seq}",
+            "cycle": cycle_no,
+            "kind": action.kind,
+            "target": action.target,
+            "state": MOD_APPLIED,
+            "rollback": rollback,
+        }
+        self._modifications.append(mod)
+        # Registro acotado: se podan primero las modificaciones ya cerradas
+        # (revertidas o fallidas); una modificación aplicada nunca se pierde.
+        while len(self._modifications) > MAX_MODIFICATIONS:
+            for i, m in enumerate(self._modifications):
+                if m["state"] != MOD_APPLIED:
+                    del self._modifications[i]
+                    break
+            else:
+                break
+        return mod
+
+    def modifications(self) -> List[Dict[str, Any]]:
+        """Registro de modificaciones con identificador, ciclo y estado."""
+        return [dict(m) for m in self._modifications]
+
+    def _revert(self, mod: Dict[str, Any], reason: str) -> bool:
+        """Revierte una modificación concreta y actualiza su estado."""
+        try:
+            self.safety.rollback(mod["rollback"])
+        except Exception as exc:
+            mod["state"] = MOD_FAILED
+            self.history.record("error", f"rollback de {mod['id']} fallido: {type(exc).__name__}: {exc}")
+            return False
+        mod["state"] = MOD_REVERTED
+        self.history.record("rollback", f"{reason}: {mod['kind']} en {mod['target']} revertido",
+                            modification=mod["id"])
+        return True
 
     # -- ciclo ----------------------------------------------------------------
     def run_cycle(self) -> Dict[str, Any]:
@@ -74,6 +127,7 @@ class NKEngine:
         ]
 
         applied, rolled_back = [], []
+        cycle_mods: List[Dict[str, Any]] = []
         now = self.clock()
         for action in decisions[CATEGORY_A]:
             key = action.kind + "|" + action.target
@@ -84,29 +138,25 @@ class NKEngine:
                 break
             try:
                 outcome = self.safety.apply(action, user_approved=False)
+                mod = self._register(self._cycles, action, outcome["rollback"])
+                cycle_mods.append(mod)
                 self.history.record("apply", f"{action.kind} en {action.target}",
-                                    justification=action.justification, rollback=outcome["rollback"])
+                                    justification=action.justification, modification=mod["id"])
                 self._last_applied[key] = now
-                applied.append({"kind": action.kind, "target": action.target})
-                self._active_rollbacks.append(outcome["rollback"])
+                applied.append({"kind": action.kind, "target": action.target, "modification": mod["id"]})
             except Exception as exc:
                 self.history.record("error", f"{action.kind} en {action.target}: {type(exc).__name__}: {exc}")
         cycle["applied"] = applied
 
-        # Comprobación post-acción: si la presión no mejora, se revierte lo
-        # aplicado en este ciclo (rollback automático de ajustes reversibles).
+        # Comprobación post-acción: si la presión empeora, se revierte SOLO lo
+        # aplicado en este ciclo, nunca los ajustes de ciclos anteriores.
         if applied:
             post = analyze(self.monitor.sample())
             worse = self._pressure_worse(findings, post)
             if worse:
-                for rb in self._active_rollbacks:
-                    try:
-                        self.safety.rollback(rb)
-                        self.history.record("rollback", f"degradación detectada ({worse}); ajuste revertido")
-                        rolled_back.append(rb.get("kind", "?"))
-                    except Exception as exc:
-                        self.history.record("error", f"rollback fallido: {exc}")
-                self._active_rollbacks.clear()
+                for mod in cycle_mods:
+                    if self._revert(mod, f"degradación detectada ({worse})"):
+                        rolled_back.append(mod["kind"])
         cycle["rolled_back"] = rolled_back
 
         cycle["duration_ms"] = round((self.clock() - t0) * 1000.0, 2)
@@ -147,6 +197,7 @@ class NKEngine:
 
         Solo acepta acciones de categoría B, reversibles y pendientes del
         último ciclo. Rechaza lo desconocido y lo protegido (categoría C).
+        La modificación queda registrada y es deshacible con undo_last().
         """
         for action in self._last_supervised:
             if action.kind == kind and action.target == target:
@@ -155,8 +206,9 @@ class NKEngine:
                 if not action.reversible:
                     raise PermissionError(f"'{kind}' no es reversible: no se aprueba desde la interfaz")
                 outcome = self.safety.apply(action, user_approved=True)
+                mod = self._register(self._cycles, action, outcome["rollback"])
                 self.history.record("apply", f"{action.kind} en {action.target} (aprobada por el usuario)",
-                                    justification=action.justification, rollback=outcome["rollback"])
+                                    justification=action.justification, modification=mod["id"])
                 self._last_supervised = [a for a in self._last_supervised
                                          if not (a.kind == kind and a.target == target)]
                 return outcome
@@ -173,16 +225,27 @@ class NKEngine:
         raise ValueError(f"no hay ninguna propuesta pendiente '{kind}' en '{target}'")
 
     def undo_last(self) -> Dict[str, Any]:
-        """Revierte el último ajuste reversible activo (si lo hay)."""
-        if not self._active_rollbacks:
-            raise ValueError("no hay ajustes activos que deshacer")
-        rb = self._active_rollbacks.pop()
-        self.safety.rollback(rb)
-        self.history.record("rollback", f"deshacer último ajuste ({rb.get('kind', '?')})")
-        return {"state": "ok", "rolled_back": rb}
+        """Revierte la última modificación aplicada (de cualquier ciclo).
+
+        Nunca revierte dos veces la misma modificación: solo considera las
+        que siguen en estado 'applied'. Si la reversión falla, la marca
+        como 'failed' y propaga el error.
+        """
+        for mod in reversed(self._modifications):
+            if mod["state"] == MOD_APPLIED:
+                if self._revert(mod, "deshacer último ajuste"):
+                    return {"state": "ok",
+                            "rolled_back": {"id": mod["id"], "cycle": mod["cycle"],
+                                            "kind": mod["kind"], "target": mod["target"],
+                                            "rollback": mod["rollback"]}}
+                raise OSError(f"no se pudo deshacer {mod['id']}: revisa el historial del NKE")
+        raise ValueError("no hay ajustes activos que deshacer")
 
     # -- estado -----------------------------------------------------------------
     def status(self) -> Dict[str, Any]:
+        by_state: Dict[str, int] = {}
+        for m in self._modifications:
+            by_state[m["state"]] = by_state.get(m["state"], 0) + 1
         return {
             "capabilities": self.caps,
             "cycles": self._cycles,
@@ -190,4 +253,10 @@ class NKEngine:
             "history_summary": self.history.summary(),
             "supervised_pending": [e for e in self.history.events("apply")][-5:],
             "last_rollback": self.history.last_rollback(),
+            "modifications": {
+                "total": len(self._modifications),
+                "by_state": by_state,
+                "recent": [{"id": m["id"], "kind": m["kind"], "target": m["target"], "state": m["state"]}
+                           for m in self._modifications[-5:]],
+            },
         }

@@ -8,6 +8,7 @@ import unittest
 from nexora.gaming.network import optimizer as gn_optimizer
 from nexora.gaming.network import profiles as gn_profiles
 from nexora.gaming.network.diagnostics import NetworkDiagnostics
+from nexora.gaming.network.engine import GamingNetworkEngine
 
 
 PING_OK = """PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data.
@@ -89,6 +90,17 @@ class QueueFakeRunner:
         raise AssertionError("comando sin guion: " + joined)
 
 
+class CountingClock:
+    """Reloj falsa determinista para ordenar modificaciones."""
+
+    def __init__(self, start=100.0):
+        self.t = start
+
+    def __call__(self):
+        self.t += 1.0
+        return self.t
+
+
 def make_env(tmp):
     """Árbol falso de /sys/class/net, /proc y resolv.conf. Devuelve rutas."""
     sys_net = os.path.join(tmp, "sys", "class", "net")
@@ -161,7 +173,7 @@ def make_diag(env, runner=None, iw_path=None, **kw):
 
 
 def make_tools(tmp):
-    """Crea binarios ficticios tc y pkexec y devuelve sus rutas."""
+    """Crea binarios ficticios tc, pkexec y resolvectl y devuelve sus rutas."""
     tc = os.path.join(tmp, "tc")
     pk = os.path.join(tmp, "pkexec")
     rc = os.path.join(tmp, "resolvectl")
@@ -169,6 +181,22 @@ def make_tools(tmp):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("# binario simulado para pruebas\n")
     return tc, pk, rc
+
+
+def make_engine(env, diag_runner=None, opt_runner=None, clock=None):
+    """Motor NGNE completo con ejecutores falsos: sin red real ni root."""
+    diag = make_diag(env, runner=diag_runner or FakeRunner(
+        outputs={env["ping"]: (0, PING_OK, "")}))
+    opt = gn_optimizer.QueueOptimizer(
+        runner=opt_runner or QueueFakeRunner(), tc_path=env["tc"],
+        pkexec_path=env["pk"], sys_net=env["sys_net"],
+        clock=clock or CountingClock())
+    dns = gn_optimizer.DnsOptimizer(
+        runner=opt_runner or QueueFakeRunner(), resolvectl_path=env["rc"],
+        pkexec_path=env["pk"], resolv_path=env["resolv"],
+        clock=clock or CountingClock())
+    return GamingNetworkEngine(diagnostics=diag, optimizer=opt, dns=dns,
+                               clock=clock or CountingClock())
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -388,6 +416,7 @@ class OptimizerTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.env = make_env(self._tmp.name)
         self.tc, self.pk, self.rc = make_tools(self._tmp.name)
+        self.env["tc"], self.env["pk"], self.env["rc"] = self.tc, self.pk, self.rc
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -523,6 +552,7 @@ class DnsTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.env = make_env(self._tmp.name)
         self.tc, self.pk, self.rc = make_tools(self._tmp.name)
+        self.env["tc"], self.env["pk"], self.env["rc"] = self.tc, self.pk, self.rc
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -591,6 +621,89 @@ class DnsTests(unittest.TestCase):
         self.assertEqual(r["state"], "error")
         self.assertEqual(r["restore"]["state"], "ok")
         self.assertEqual(dns.modifications(), [])
+
+
+class EngineTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.env = make_env(self._tmp.name)
+        self.tc, self.pk, self.rc = make_tools(self._tmp.name)
+        self.env["tc"], self.env["pk"], self.env["rc"] = self.tc, self.pk, self.rc
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_set_profile_y_perfil_actual(self):
+        engine = make_engine(self.env)
+        r = engine.set_profile("balanced")
+        self.assertEqual(r["state"], "ok")
+        self.assertEqual(r["name"], "balanced")
+        self.assertEqual(engine.profile()["effective"]["qdisc"], "fq_codel")
+        self.assertEqual(engine.primary_iface(), "eth0")
+
+    def test_sin_perfil_optimize_es_no_disponible(self):
+        engine = make_engine(self.env)
+        r = engine.optimize(user_approved=True)
+        self.assertEqual(r["state"], "unavailable")
+        self.assertIn("perfil", r["note"])
+
+    def test_optimize_sin_aprobacion_requiere_confirmacion(self):
+        runner = QueueFakeRunner()
+        engine = make_engine(self.env, opt_runner=runner)
+        engine.set_profile("balanced")
+        r = engine.optimize(user_approved=False)
+        self.assertEqual(r["results"]["qdisc"]["state"], "confirmation_required")
+        self.assertEqual(r["results"]["dns"]["state"], "skipped")
+        self.assertEqual(runner.calls, [])
+
+    def test_optimize_con_aprobacion_aplica_y_verifica(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_FQ_CODEL)
+        engine = make_engine(self.env, opt_runner=runner)
+        engine.set_profile("balanced")
+        r = engine.optimize(user_approved=True)
+        self.assertEqual(r["state"], "ok")
+        self.assertEqual(r["results"]["qdisc"]["state"], "ok")
+        self.assertTrue(r["results"]["qdisc"]["verified"])
+        self.assertIn("no elige servidores", r["results"]["dns"]["note"])
+
+    def test_undo_last_deshace_lo_mas_reciente(self):
+        clock = CountingClock()
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_FQ_CODEL)
+        runner.queue("dns eth0", rc=0)
+        runner.queue("dns eth0", out="Link 2 (eth0): 9.9.9.9\n")
+        runner.queue("dns eth0", rc=0)
+        runner.queue("dns eth0", out="Link 2 (eth0): 1.1.1.1 8.8.8.8\n")
+        runner.queue("qdisc del", rc=0)
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        engine = make_engine(self.env, opt_runner=runner, clock=clock)
+        engine.set_profile("balanced")
+        engine.optimize(user_approved=True, dns_servers=["9.9.9.9"])
+        u = engine.undo_last()
+        self.assertEqual(u["state"], "ok")
+        self.assertEqual(u["modification"]["type"], "dns")
+        u2 = engine.undo_last()
+        self.assertEqual(u2["state"], "ok")
+        self.assertEqual(u2["modification"]["type"], "qdisc")
+        u3 = engine.undo_last()
+        self.assertEqual(u3["state"], "unavailable")
+
+    def test_health_check_y_diagnose(self):
+        engine = make_engine(self.env)
+        self.assertTrue(engine.health_check())
+        d = engine.diagnose()
+        self.assertIn("latency", d["diagnostics"])
+        self.assertEqual(d["capabilities"]["state"], "ok")
+        vacio = GamingNetworkEngine(diagnostics=NetworkDiagnostics(
+            sys_net="/no/existe", route_path="/no/route",
+            wireless_path="/no/wireless", resolv_path="/no/resolv",
+            ping_path="/no/ping"))
+        self.assertFalse(vacio.health_check())
 
 
 if __name__ == "__main__":

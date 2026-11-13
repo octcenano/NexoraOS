@@ -10,5 +10,6 @@ de juego adaptados al hardware y al tipo de enlace. Módulos:
 """
 
 from nexora.gaming.network.diagnostics import NetworkDiagnostics
+from nexora.gaming.network.engine import GamingNetworkEngine
 
-__all__ = ["NetworkDiagnostics"]
+__all__ = ["NetworkDiagnostics", "GamingNetworkEngine"]

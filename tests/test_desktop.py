@@ -7,6 +7,8 @@ prueban directamente (patrón modelo/vista ya usado en ui/dashboard).
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -18,8 +20,13 @@ from nexora.desktop.dashboard import DashboardModel, service_state, top_processe
 from nexora.desktop.hub import NexoraHub
 from nexora.desktop.mode_center import ModeCenter
 from nexora.desktop.nke_control import NKEControl
+from nexora.desktop.nke_panel import AsyncRunner, NkePanelModel, Poller
 from nexora.desktop.shell import ApplicationIndex, GlobalSearch, PANEL_LAYOUT, workspaces
 from nexora.desktop.system_center import PRIVILEGED_ACTIONS, SECTIONS, SystemCenter, list_users, pending_updates
+from nexora.nke.capabilities import detect_capabilities
+from nexora.nke.engine import NKEngine
+from nexora.nke.monitor import NKMonitor
+from nexora.nke.safety import Executor
 
 
 def write_desktop(path: Path, name: str, exec_name: str, categories: str = "Utility",
@@ -31,6 +38,90 @@ def write_desktop(path: Path, name: str, exec_name: str, categories: str = "Util
         f"Categories={categories}\n"
         f"NoDisplay={nodisplay}\n",
         encoding="utf-8",
+    )
+
+
+def _make_fake_proc(tmp: Path) -> Path:
+    proc = tmp / "proc"
+    (proc / "pressure").mkdir(parents=True)
+    (proc / "pressure" / "cpu").write_text("some avg10=0.00 avg60=0.00 avg300=0.00\nfull avg10=0.00\n")
+    (proc / "pressure" / "memory").write_text("some avg10=50.00 avg60=0.00 avg300=0.00\nfull avg10=0.00\n")
+    (proc / "pressure" / "io").write_text("some avg10=0.00 avg60=0.00 avg300=0.00\nfull avg10=0.00\n")
+    (proc / "meminfo").write_text(
+        "MemTotal:       16000000 kB\nMemAvailable:    8000000 kB\n"
+        "SwapTotal:       2000000 kB\nSwapFree:        1900000 kB\n"
+    )
+    (proc / "loadavg").write_text("0.10 0.20 0.30 1/100 1234\n")
+    (proc / "swaps").write_text("Filename\t\t\t\tType\t\tSize\tUsed\tPriority\n/swapfile file 2097148 0 -2\n")
+    (proc / "sys" / "kernel").mkdir(parents=True)
+    (proc / "sys" / "kernel" / "tainted").write_text("0\n")
+    (proc / "sys" / "vm").mkdir(parents=True)
+    (proc / "sys" / "vm" / "swappiness").write_text("60\n")
+    (proc / "1").mkdir()
+    (proc / "1" / "comm").write_text("systemd\n")
+    (proc / "1" / "stat").write_text("1 (systemd) S 0 1 1 0 -1 4194560 1 1 0 0 500 100 0 0 20 0 1 0\n")
+    return proc
+
+
+def _make_fake_sys(tmp: Path) -> Path:
+    sysfs = tmp / "sys"
+    (sysfs / "class" / "net").mkdir(parents=True)
+    (sysfs / "class" / "net" / "wlan0").mkdir()
+    (sysfs / "fs" / "cgroup").mkdir(parents=True)
+    (sysfs / "fs" / "cgroup" / "cgroup.controllers").write_text("cpu io memory pids\n")
+    cpu0 = sysfs / "devices" / "system" / "cpu" / "cpu0" / "cpufreq"
+    cpu0.mkdir(parents=True)
+    (cpu0 / "scaling_available_governors").write_text("performance powersave schedutil\n")
+    (cpu0 / "scaling_governor").write_text("schedutil\n")
+    return sysfs
+
+
+class _FakeExecutor(Executor):
+    def __init__(self):
+        self.writes, self.mkdirs, self.renices, self.signals = [], [], [], []
+        self.files = {}
+        self.nice = {}
+
+    def write_sys(self, path, data):
+        self.writes.append((path, data))
+        self.files[path] = data
+
+    def read_sys(self, path):
+        return self.files.get(path)
+
+    def mkdir(self, path):
+        self.mkdirs.append(path)
+
+    def renice(self, pid, nice):
+        self.renices.append((pid, nice))
+        self.nice[pid] = nice
+
+    def getnice(self, pid):
+        return self.nice.get(pid, 0)
+
+    def signal(self, pid, sig):
+        self.signals.append((pid, sig))
+
+
+def _test_engine(tmp: Path) -> NKEngine:
+    """Motor NKE determinista sobre /proc y /sys falsos, con presión de memoria
+    y una petición de perfil que genera una propuesta supervisada pendiente."""
+    _make_fake_proc(tmp)
+    _make_fake_sys(tmp)
+
+    class FakeMonitor(NKMonitor):
+        def capabilities(self):
+            return detect_capabilities(str(tmp / "proc"), str(tmp / "sys"),
+                                       kernel_release="test")
+
+    t = {"now": 0.0}
+    return NKEngine(
+        monitor=FakeMonitor(str(tmp / "proc")),
+        executor=_FakeExecutor(),
+        clock=lambda: t["now"],
+        sleeper=lambda s: t.__setitem__("now", t["now"] + s),
+        profile_requests=[{"kind": "pause_secondary_agents", "mode": "gaming",
+                           "params": {"pids": [4242]}}],
     )
 
 
@@ -178,6 +269,168 @@ class NKEControlTests(unittest.TestCase):
         # En CI sin presión las propuestas B suelen estar vacías; el estado
         # debe ser coherente en cualquier caso.
         self.assertIsInstance(self.control.pending(), list)
+
+
+class NkePanelTests(unittest.TestCase):
+    def _panel(self, tmp: Path):
+        engine = _test_engine(tmp)
+        return NkePanelModel(NKEControl(engine=engine)), engine
+
+    def test_snapshot_lists_pending_with_impact_and_implementation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, engine = self._panel(Path(tmp))
+            engine.run_cycle()
+            snap = panel.snapshot()
+            pend = [p for p in snap["pending"] if p["kind"] == "pause_secondary_agents"]
+            self.assertEqual(len(pend), 1)
+            p = pend[0]
+            self.assertEqual(p["category"], "supervised")
+            self.assertEqual(p["category_label"], "supervisada")
+            self.assertTrue(p["reversible"])
+            self.assertTrue(p["implemented"])
+            self.assertTrue(p["impact"])
+            self.assertEqual(snap["state"], "ok")
+
+    def test_actions_require_explicit_confirmation(self):
+        """Sin confirmación explícita no se aplica ningún cambio."""
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, engine = self._panel(Path(tmp))
+            engine.run_cycle()
+            self.assertEqual(panel.approve("pause_secondary_agents", "sistema")["state"],
+                             "confirmation_required")
+            self.assertEqual(panel.reject("pause_secondary_agents", "sistema")["state"],
+                             "confirmation_required")
+            self.assertEqual(panel.undo_last()["state"], "confirmation_required")
+            self.assertEqual(engine.modifications()[-1]["state"], "applied")
+
+    def test_approve_with_confirmation_applies_and_undo_restores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, engine = self._panel(Path(tmp))
+            engine.run_cycle()
+            res = panel.approve("pause_secondary_agents", "sistema", confirmed=True)
+            self.assertEqual(res["state"], "ok")
+            mods = engine.modifications()
+            self.assertEqual(mods[-1]["kind"], "pause_secondary_agents")
+            self.assertEqual(mods[-1]["state"], "applied")
+            out = panel.undo_last(confirmed=True)
+            self.assertEqual(out["rolled_back"]["kind"], "pause_secondary_agents")
+            self.assertEqual(engine.modifications()[-1]["state"], "reverted")
+
+    def test_reject_with_confirmation_removes_the_proposal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, engine = self._panel(Path(tmp))
+            engine.run_cycle()
+            res = panel.reject("pause_secondary_agents", "sistema", confirmed=True)
+            self.assertEqual(res["state"], "ok")
+            self.assertFalse(any(a.kind == "pause_secondary_agents"
+                                 for a in engine.last_supervised()))
+
+    def test_unimplemented_action_is_declared_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, _ = self._panel(Path(tmp))
+            res = panel.explain("change_dns")
+            self.assertEqual(res["state"], "unavailable")
+
+    def test_run_cycle_passthrough(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, _ = self._panel(Path(tmp))
+            res = panel.run_cycle()
+            self.assertEqual(res["state"], "ok")
+            self.assertIn("applied", res["cycle"])
+
+
+class RefreshTests(unittest.TestCase):
+    def test_poller_produces_snapshots_and_notifies_listeners(self):
+        calls = {"n": 0}
+
+        def producer():
+            calls["n"] += 1
+            return {"state": "ok", "n": calls["n"]}
+
+        poller = Poller(producer, interval_ms=1500)
+        got = []
+        poller.listeners.append(got.append)
+        self.assertTrue(poller.tick())
+        self.assertEqual(poller.ticks, 1)
+        self.assertEqual(poller.last["n"], 1)
+        self.assertEqual(got, [poller.last])
+        self.assertEqual(poller.interval_ms, 1500)
+
+    def test_poller_converts_producer_errors_into_error_state(self):
+        def producer():
+            raise RuntimeError("fallo de sondeo")
+
+        poller = Poller(producer)
+        self.assertTrue(poller.tick())
+        self.assertEqual(poller.last["state"], "error")
+        self.assertIn("fallo de sondeo", poller.last["message"])
+
+    def test_poller_records_listener_errors_without_stopping(self):
+        poller = Poller(lambda: {"state": "ok"})
+        def bad(_snap):
+            raise RuntimeError("oyente defectuoso")
+        poller.listeners.append(bad)
+        self.assertTrue(poller.tick())
+        self.assertEqual(poller.last["state"], "ok")
+        self.assertIn("oyente defectuoso", poller.errors[-1]["error"])
+
+    def test_async_runner_runs_off_caller_thread_and_delivers(self):
+        delivered = []
+        done = threading.Event()
+        runner = AsyncRunner(deliver=lambda cb: cb())
+        caller = threading.get_ident()
+
+        def work():
+            return threading.get_ident()
+
+        def on_done(tid):
+            delivered.append(tid != caller)
+            done.set()
+
+        runner.submit(work, on_done)
+        self.assertTrue(done.wait(timeout=10))
+        self.assertEqual(delivered, [True])
+
+    def test_async_runner_delivers_errors_without_raising(self):
+        errs = []
+        done = threading.Event()
+        runner = AsyncRunner(deliver=lambda cb: cb())
+
+        def work():
+            raise ValueError("fallo controlado")
+
+        runner.submit(work, on_done=lambda r: errs.append(("ok", r)),
+                      on_error=lambda e: (errs.append(("err", str(e))), done.set()))
+        self.assertTrue(done.wait(timeout=10))
+        self.assertEqual(errs, [("err", "fallo controlado")])
+
+    def test_async_runner_pending_returns_to_zero(self):
+        runner = AsyncRunner(deliver=lambda cb: cb())
+        gate = threading.Event()
+        done = threading.Event()
+
+        def work():
+            gate.wait(timeout=5)
+            return 1
+
+        runner.submit(work, on_done=lambda r: done.set())
+        gate.set()
+        self.assertTrue(done.wait(timeout=10))
+        for _ in range(200):
+            if runner.pending == 0:
+                break
+            time.sleep(0.01)
+        self.assertEqual(runner.pending, 0)
+
+
+class GtkuiModuleTests(unittest.TestCase):
+    def test_imports_without_gtk_and_keeps_theme_constants(self):
+        import importlib
+        mod = importlib.import_module("nexora.desktop.gtkui")
+        self.assertTrue(callable(mod.run))
+        self.assertEqual(mod.ACCENT_DEFAULT, "#3a7bd5")
+        self.assertEqual(mod.REFRESH_INTERVAL_MS, 2000)
+        self.assertIn("Nexora-Dark", mod.GTK_CSS.format(accent=mod.ACCENT_DEFAULT) + "/usr/share/themes/Nexora-Dark")
 
 
 class HubTests(unittest.TestCase):

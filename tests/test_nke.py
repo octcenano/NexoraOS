@@ -180,7 +180,7 @@ class AnalyzerTests(unittest.TestCase):
     def test_presion_de_cpu_adjunta_procesos_top(self):
         """El hallazgo de CPU incluye los procesos top: deprioritize necesita un pid real."""
         tops = [{"pid": 7, "comm": "juego", "cpu_ticks": 900}]
-        f = analyze(self._sample(psi={"cpu": {"some": 50.0}, "memory": {"some": 0.0}, "io": {"some": 0.0"}},
+        f = analyze(self._sample(psi={"cpu": {"some": 50.0}, "memory": {"some": 0.0}, "io": {"some": 0.0}},
                                  top_processes=tops))
         cp = next(x for x in f if x["kind"] == "cpu_pressure")
         self.assertEqual(cp["top_processes"], tops)

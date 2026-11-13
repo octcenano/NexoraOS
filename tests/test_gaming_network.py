@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+from nexora.gaming.network import optimizer as gn_optimizer
+from nexora.gaming.network import profiles as gn_profiles
 from nexora.gaming.network.diagnostics import NetworkDiagnostics
 
 
@@ -37,6 +39,14 @@ IW_5GHZ = """Connected to aa:bb:cc:dd:ee:ff (on wlan0)
 	signal: -52 dBm
 """
 
+SHOW_NOQUEUE = "qdisc noqueue 0: root refcnt 2\n"
+SHOW_FQ_CODEL = ("qdisc fq_codel 8001: root refcnt 2 limit 10240p flows 1024 "
+                 "quantum 1514 target 5.0ms interval 100.0ms\n")
+SHOW_CAKE = ("qdisc cake 8001: root bandwidth unlimited diffserv4 triple-isolate "
+             "nonat nowash no-ack-filter split-gso rtt 100ms noatm\n")
+SHOW_PFIFO = "qdisc pfifo_fast 0: root refcnt 2 bands 3 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1\n"
+SHOW_HTB = "qdisc htb 8001: root refcnt 2 r2q 10 default 0 direct_packets_stat 0\n"
+
 
 class FakeRunner:
     """Ejecutor falso: registra llamadas y devuelve salidas fijas. Sin red."""
@@ -55,6 +65,28 @@ class FakeRunner:
             raise AssertionError("comando inesperado: " + key)
         rc, out, err = self.outputs[key]
         return subprocess.CompletedProcess(argv, rc, stdout=out, stderr=err)
+
+
+class QueueFakeRunner:
+    """Ejecutor falso con guion secuencial: cada llamada consume la siguiente
+    salida cuyo filtro coincide con el argv. Para encadenar tc show/replace."""
+
+    def __init__(self):
+        self.calls = []
+        self.script = []
+
+    def queue(self, contains, rc=0, out="", err=""):
+        self.script.append([contains, rc, out, err])
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        joined = " ".join(argv)
+        for i, item in enumerate(self.script):
+            if item[0] in joined:
+                self.script.pop(i)
+                return subprocess.CompletedProcess(argv, item[1], stdout=item[2],
+                                                   stderr=item[3])
+        raise AssertionError("comando sin guion: " + joined)
 
 
 def make_env(tmp):
@@ -126,6 +158,17 @@ def make_diag(env, runner=None, iw_path=None, **kw):
         wireless_path=env["wireless"], resolv_path=env["resolv"],
         runner=runner, ping_path=env["ping"], iw_path=iw_path, **kw
     )
+
+
+def make_tools(tmp):
+    """Crea binarios ficticios tc y pkexec y devuelve sus rutas."""
+    tc = os.path.join(tmp, "tc")
+    pk = os.path.join(tmp, "pkexec")
+    rc = os.path.join(tmp, "resolvectl")
+    for path in (tc, pk, rc):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("# binario simulado para pruebas\n")
+    return tc, pk, rc
 
 
 class DiagnosticsTests(unittest.TestCase):
@@ -298,6 +341,256 @@ class DiagnosticsTests(unittest.TestCase):
         d = make_diag(self.env)
         r = d.ping("")
         self.assertEqual(r["state"], "unavailable")
+
+
+class ProfilesTests(unittest.TestCase):
+    def test_catalogo_de_seis_perfiles(self):
+        self.assertEqual(len(gn_profiles.GAMING_PROFILES), 6)
+        self.assertEqual(tuple(gn_profiles.GAMING_PROFILES), gn_profiles.PROFILE_ORDER)
+
+    def test_hardware_compacto_sustituye_cake_por_fq_codel(self):
+        r = gn_profiles.adapt_profile("low_latency", {"hardware_tier": "compact"})
+        self.assertEqual(r["effective"]["qdisc"], "fq_codel")
+        self.assertTrue(any("fq-codel" in a for a in r["adaptations"]))
+
+    def test_sin_alternativa_de_cola_deja_qdisc_none(self):
+        r = gn_profiles.adapt_profile("balanced", {"qdiscs_available": ["htb"]})
+        self.assertIsNone(r["effective"]["qdisc"])
+        self.assertTrue(any("no se toca nada" in a for a in r["adaptations"]))
+
+    def test_alternativa_de_cola_disponible_se_usa(self):
+        r = gn_profiles.adapt_profile("balanced", {"qdiscs_available": ["cake"]})
+        self.assertEqual(r["effective"]["qdisc"], "cake")
+        self.assertTrue(any("se usa cake" in a for a in r["adaptations"]))
+
+    def test_custom_valida_parametros(self):
+        r = gn_profiles.adapt_profile("custom", {"custom_params": {
+            "qdisc": "cake", "qdisc_params": {"bandwidth": "20mbit"},
+        }})
+        self.assertEqual(r["effective"]["qdisc"], "cake")
+        self.assertEqual(r["effective"]["qdisc_params"]["bandwidth"], "20mbit")
+        with self.assertRaises(ValueError):
+            gn_profiles.adapt_profile("custom", {"custom_params": {"inventado": 1}})
+        with self.assertRaises(ValueError):
+            gn_profiles.adapt_profile("custom", {"custom_params": {"qdisc": "htb"}})
+
+    def test_perfil_desconocido_lanza_valueerror(self):
+        with self.assertRaises(ValueError):
+            gn_profiles.adapt_profile("turbo")
+
+    def test_wifi_con_perfil_ethernet_avisa(self):
+        r = gn_profiles.adapt_profile("ethernet", {"link_type": "wifi"})
+        self.assertTrue(any("Wi-Fi" in a for a in r["adaptations"]))
+
+
+class OptimizerTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.env = make_env(self._tmp.name)
+        self.tc, self.pk, self.rc = make_tools(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _opt(self, runner):
+        return gn_optimizer.QueueOptimizer(
+            runner=runner, tc_path=self.tc, pkexec_path=self.pk,
+            sys_net=self.env["sys_net"],
+        )
+
+    def test_current_qdisc_interpreta_salida_real(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_FQ_CODEL)
+        opt = self._opt(runner)
+        r = opt.current_qdisc("eth0")
+        self.assertEqual(r["state"], "ok")
+        self.assertEqual(r["kind"], "fq_codel")
+
+    def test_current_qdisc_sin_tc_es_no_disponible(self):
+        opt = gn_optimizer.QueueOptimizer(runner=QueueFakeRunner(),
+                                          tc_path="/no/existe/tc",
+                                          sys_net=self.env["sys_net"])
+        r = opt.current_qdisc("eth0")
+        self.assertEqual(r["state"], "unavailable")
+
+    def test_compatibility_sin_pkexec_es_no_disponible(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        opt = gn_optimizer.QueueOptimizer(runner=runner, tc_path=self.tc,
+                                          pkexec_path="/no/existe/pkexec",
+                                          sys_net=self.env["sys_net"])
+        r = opt.compatibility("eth0")
+        self.assertEqual(r["state"], "unavailable")
+        self.assertFalse(r["pkexec"])
+
+    def test_apply_sin_confirmacion_no_ejecuta_nada(self):
+        runner = QueueFakeRunner()
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "fq_codel")
+        self.assertEqual(r["state"], "confirmation_required")
+        self.assertEqual(runner.calls, [])
+
+    def test_apply_rechaza_cola_y_parametros_desconocidos(self):
+        opt = self._opt(QueueFakeRunner())
+        r = opt.apply_qdisc("eth0", "htb", user_approved=True)
+        self.assertEqual(r["state"], "rejected")
+        r2 = opt.apply_qdisc("eth0", "cake", params={"inventado": 1}, user_approved=True)
+        self.assertEqual(r2["state"], "rejected")
+        r3 = opt.apply_qdisc("noexiste", "fq_codel", user_approved=True)
+        self.assertEqual(r3["state"], "rejected")
+
+    def test_apply_captura_previo_aplica_y_verifica(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_FQ_CODEL)
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "fq_codel", user_approved=True)
+        self.assertEqual(r["state"], "ok")
+        self.assertTrue(r["verified"])
+        mod = r["modification"]
+        self.assertEqual(mod["previous_kind"], "noqueue")
+        self.assertEqual(mod["state"], "applied")
+        self.assertEqual(runner.calls[0], [self.pk, self.tc, "qdisc", "replace",
+                                           "dev", "eth0", "root", "fq_codel"])
+
+    def test_apply_sin_lectura_previa_no_toca_nada(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", rc=1, err="Cannot find device")
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "fq_codel", user_approved=True)
+        self.assertEqual(r["state"], "error")
+        self.assertIn("no se toca nada", r["note"])
+        self.assertEqual(len(runner.calls), 1)  # solo la lectura, ningún cambio
+
+    def test_apply_con_cola_previa_no_restaurable_rechaza(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_HTB)
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "fq_codel", user_approved=True)
+        self.assertEqual(r["state"], "rejected")
+        self.assertIn("htb", r["note"])
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_verificacion_fallida_restaura_estado_previo(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)  # la cola no cambió de verdad
+        runner.queue("qdisc del", rc=0)               # restauración
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)  # verificación de la restauración
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "fq_codel", user_approved=True)
+        self.assertEqual(r["state"], "error")
+        self.assertEqual(r["restore"]["state"], "ok")
+        self.assertEqual(opt.modifications(), [])
+
+    def test_undo_last_restaura_pfifo_fast(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_PFIFO)
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_FQ_CODEL)
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "fq_codel", user_approved=True)
+        self.assertEqual(r["state"], "ok")
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_PFIFO)
+        u = opt.undo_last()
+        self.assertEqual(u["state"], "ok")
+        self.assertEqual(u["modification"]["previous_kind"], "pfifo_fast")
+        self.assertEqual(u["modification"]["state"], "reverted")
+
+    def test_cake_con_bandwidth_y_diffserv_en_argv(self):
+        runner = QueueFakeRunner()
+        runner.queue("qdisc show", out=SHOW_NOQUEUE)
+        runner.queue("qdisc replace", rc=0)
+        runner.queue("qdisc show", out=SHOW_CAKE)
+        opt = self._opt(runner)
+        r = opt.apply_qdisc("eth0", "cake",
+                            params={"bandwidth": "50mbit", "diffserv": "diffserv4"},
+                            user_approved=True)
+        self.assertEqual(r["state"], "ok")
+        self.assertEqual(runner.calls[0][-4:], ["cake", "bandwidth", "50mbit", "diffserv4"])
+
+    def test_undo_sin_modificaciones_es_no_disponible(self):
+        opt = self._opt(QueueFakeRunner())
+        r = opt.undo_last()
+        self.assertEqual(r["state"], "unavailable")
+
+
+class DnsTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.env = make_env(self._tmp.name)
+        self.tc, self.pk, self.rc = make_tools(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _dns(self, runner):
+        return gn_optimizer.DnsOptimizer(
+            runner=runner, resolvectl_path=self.rc, pkexec_path=self.pk,
+            resolv_path=self.env["resolv"],
+        )
+
+    def test_sin_consentimiento_no_ejecuta_nada(self):
+        runner = QueueFakeRunner()
+        dns = self._dns(runner)
+        r = dns.set_servers("eth0", ["9.9.9.9"])
+        self.assertEqual(r["state"], "confirmation_required")
+        self.assertEqual(runner.calls, [])
+
+    def test_servidor_invalido_rechazado(self):
+        dns = self._dns(QueueFakeRunner())
+        r = dns.set_servers("eth0", ["no-es-una-ip"], user_approved=True)
+        self.assertEqual(r["state"], "rejected")
+        self.assertIn("no es una IP", r["note"])
+
+    def test_aplica_y_verifica_con_resolvectl(self):
+        runner = QueueFakeRunner()
+        runner.queue("dns eth0", rc=0)                      # aplicar
+        runner.queue("dns eth0", out="Link 2 (eth0): 9.9.9.9 149.112.112.112\n")
+        dns = self._dns(runner)
+        r = dns.set_servers("eth0", ["9.9.9.9", "149.112.112.112"], user_approved=True)
+        self.assertEqual(r["state"], "ok")
+        self.assertTrue(r["verified"])
+        mod = r["modification"]
+        self.assertEqual(mod["previous_servers"], ["1.1.1.1", "8.8.8.8"])
+        self.assertEqual(runner.calls[0], [self.pk, self.rc, "dns", "eth0",
+                                           "9.9.9.9", "149.112.112.112"])
+
+    def test_undo_restaura_los_servidores_previos(self):
+        runner = QueueFakeRunner()
+        runner.queue("dns eth0", rc=0)
+        runner.queue("dns eth0", out="Link 2 (eth0): 9.9.9.9\n")
+        dns = self._dns(runner)
+        r = dns.set_servers("eth0", ["9.9.9.9"], user_approved=True)
+        self.assertEqual(r["state"], "ok")
+        runner.queue("dns eth0", rc=0)                      # restaurar
+        runner.queue("dns eth0", out="Link 2 (eth0): 1.1.1.1 8.8.8.8\n")
+        u = dns.undo_last()
+        self.assertEqual(u["state"], "ok")
+        self.assertEqual(runner.calls[-2], [self.pk, self.rc, "dns", "eth0",
+                                            "1.1.1.1", "8.8.8.8"])
+
+    def test_sin_resolvectl_es_no_disponible(self):
+        dns = gn_optimizer.DnsOptimizer(runner=QueueFakeRunner(),
+                                        resolvectl_path="/no/existe/resolvectl",
+                                        pkexec_path=self.pk,
+                                        resolv_path=self.env["resolv"])
+        r = dns.set_servers("eth0", ["9.9.9.9"], user_approved=True)
+        self.assertEqual(r["state"], "unavailable")
+
+    def test_verificacion_fallida_restaura(self):
+        runner = QueueFakeRunner()
+        runner.queue("dns eth0", rc=0)                      # aplicar
+        runner.queue("dns eth0", out="Link 2 (eth0):\n")    # verificación: vacío
+        runner.queue("revert", rc=0)                        # restauración
+        dns = self._dns(runner)
+        r = dns.set_servers("eth0", ["9.9.9.9"], user_approved=True)
+        self.assertEqual(r["state"], "error")
+        self.assertEqual(r["restore"]["state"], "ok")
+        self.assertEqual(dns.modifications(), [])
 
 
 if __name__ == "__main__":

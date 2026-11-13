@@ -1,4 +1,4 @@
-"""Supervisión ligera de componentes (watchdog del core).
+"""Supervision ligera de componentes (watchdog del core).
 
 Diseño:
   - No es un demonio residente por defecto: 'run_once' hace una pasada y sale.
@@ -16,7 +16,8 @@ Diseño:
     de recuperación el circuito se abre (sin reintentos); tras
     'circuit_reset_s' pasa a semiabierto y se permite una única prueba; si
     la prueba verifica la salud, el circuito se cierra y los contadores se
-    reinician; si falla, se reabre.
+    reinician; si falla, se reabre. La entrada de registro marca con 'probe'
+    los intentos que se ejecutaron como prueba semiabierta.
   - Historial de incidencias acotado (transiciones sano->degradado) y registro
     detallado de cada intento (duración, verificación, estado del circuito).
   - 'diagnose()': informe de diagnóstico sin ejecutar recuperaciones.
@@ -167,6 +168,8 @@ class Watchdog:
             since = now - self._last_attempt.get(name, 0.0)
             probe = circuit == "half_open"
             if probe or (attempts < self.max_restarts and since >= wait):
+                if probe:
+                    entry["probe"] = True
                 self._last_attempt[name] = now
                 self._restarts[name] = attempts + 1
                 t0 = self._clock()

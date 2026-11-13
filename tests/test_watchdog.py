@@ -108,8 +108,10 @@ class WatchdogTests(unittest.TestCase):
 class CircuitBreakerTests(unittest.TestCase):
     def _watchdog(self, **kw):
         clock = FakeClock()
-        w = wd.Watchdog(max_restarts=2, cooldown_s=5.0, clock=clock,
-                        sleeper=lambda s: None, **kw)
+        params = dict(max_restarts=2, cooldown_s=5.0, backoff_factor=2.0,
+                      backoff_max_s=300.0, circuit_reset_s=60.0)
+        params.update(kw)
+        w = wd.Watchdog(clock=clock, sleeper=lambda s: None, **params)
         return w, clock
 
     def test_recuperacion_verificada_cierra_el_circuito(self):
@@ -156,49 +158,58 @@ class CircuitBreakerTests(unittest.TestCase):
         self.assertEqual(w.restart_count("muerto"), 2)
 
     def test_circuito_semiabierto_permite_una_prueba_y_cierra(self):
+        """Tras circuit_reset_s se permite una prueba: si verifica, cierra."""
         w, clock = self._watchdog(circuit_reset_s=30.0)
-        state = {"healthy": False}
+        state = {"healthy": False, "cure": False}
 
         def health():
             return state["healthy"]
 
         def recover():
-            state["healthy"] = True
+            if state["cure"]:
+                state["healthy"] = True
             return True
 
         w.register(wd.Component("svc", health, recover=recover))
         clock.advance(10)
-        w.check("svc")
+        e1 = w.check("svc")   # intento 1: recuperacion declarada pero no verificada
+        self.assertTrue(e1["restarted"])
+        self.assertFalse(e1["verified"])
         clock.advance(10)
-        e2 = w.check("svc")
+        e2 = w.check("svc")   # segundo fallo consecutivo: el circuito se abre
         self.assertEqual(e2["circuit"], "open")
         clock.advance(31)
-        e3 = w.check("svc")
-        self.assertEqual(e3["circuit"], "half_open")
+        state["cure"] = True
+        e3 = w.check("svc")   # prueba semiabierta: cura verificada -> cerrado
+        self.assertTrue(e3["probe"])
         self.assertTrue(e3["restarted"])
         self.assertTrue(e3["verified"])
         self.assertEqual(e3["circuit"], "closed")
         self.assertEqual(w.circuit_states()["svc"], "closed")
 
     def test_circuito_semiabierto_que_falla_reabre(self):
+        """La prueba semiabierta que no verifica reabre el circuito."""
         w, clock = self._watchdog(circuit_reset_s=30.0)
         w.register(wd.Component("muerto", lambda: False, recover=lambda: True))
         clock.advance(10)
-        w.check("muerto")
+        w.check("muerto")   # intento 1
         clock.advance(10)
-        w.check("muerto")  # circuito abierto
+        e2 = w.check("muerto")  # intento 2: abre el circuito
+        self.assertEqual(e2["circuit"], "open")
         clock.advance(31)
-        e3 = w.check("muerto")
-        self.assertEqual(e3["circuit"], "half_open")
+        e3 = w.check("muerto")  # prueba semiabierta: falla, el circuito reabre
+        self.assertTrue(e3["probe"])
         self.assertTrue(e3["restarted"])
         self.assertFalse(e3["verified"])
+        self.assertEqual(e3["circuit"], "open")
         clock.advance(1)
         e4 = w.check("muerto")
         self.assertEqual(e4["circuit"], "open")
         self.assertFalse(e4["restarted"])
+        self.assertTrue(e4["exhausted"])
 
     def test_backoff_progresivo(self):
-        w, clock = self._watchdog(backoff_factor=3.0)
+        w, clock = self._watchdog(backoff_factor=3.0, max_restarts=6)
         w.register(wd.Component("svc", lambda: False, recover=lambda: True))
         clock.advance(10)
         w.check("svc")        # intento 1: espera base (cooldown)
@@ -214,12 +225,12 @@ class CircuitBreakerTests(unittest.TestCase):
         self.assertTrue(e4["restarted"])
 
     def test_backoff_acotado_por_maximo(self):
-        w, clock = self._watchdog(backoff_factor=10.0, backoff_max_s=12.0)
+        w, clock = self._watchdog(backoff_factor=10.0, backoff_max_s=12.0, max_restarts=6)
         w.register(wd.Component("svc", lambda: False, recover=lambda: True))
         clock.advance(10)
         w.check("svc")
         clock.advance(6)
-        w.check("svc")        # 2 intentos; la espera teórica sería 50, acotada a 12
+        w.check("svc")        # 2 intentos; la espera teorica seria 50, acotada a 12
         clock.advance(13)
         e3 = w.check("svc")
         self.assertTrue(e3["restarted"])

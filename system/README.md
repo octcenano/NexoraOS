@@ -70,3 +70,7 @@ los criterios de calidad obligatorios (tests, watchdogs, daemons, seguridad).
 ## Correccion del CI ISO (0.3.1)
 
 build.sh se ejecuta con bash porque push_files no conserva el bit de ejecucion (100644); el contenedor instala git antes del checkout y refresca archlinux-keyring antes de sincronizar.
+
+## CI ISO 0.3.2
+
+El paso de ISO queda separado en dos fases (ensamblado y mkarchiso) para localizar fallos con precision.

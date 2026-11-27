@@ -23,9 +23,13 @@ jobs:
       - name: Instalar archiso y utilidades
         run: pacman -Syu --noconfirm archiso git rsync jq
 
-      - name: Ensamblar perfil archiso y generar ISO
+      - name: Ensamblar perfil archiso
         working-directory: system
-        run: bash archiso/build.sh
+        run: bash archiso/build.sh assemble
+
+      - name: Generar ISO
+        working-directory: system
+        run: bash archiso/build.sh iso
 
       - name: Verificar ISO generada
         working-directory: system

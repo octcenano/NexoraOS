@@ -12,6 +12,12 @@ jobs:
     container:
       image: archlinux:base-devel
     steps:
+      - name: Instalar git para checkout
+        run: |
+          pacman-key --init
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -S --noconfirm git
+
       - uses: actions/checkout@v4
 
       - name: Instalar archiso y utilidades
@@ -19,11 +25,15 @@ jobs:
 
       - name: Ensamblar perfil archiso y generar ISO
         working-directory: system
-        run: ./archiso/build.sh
+        run: bash archiso/build.sh
 
       - name: Verificar ISO generada
         working-directory: system
-        run: test -f out/*.iso && ls -lh out/
+        run: |
+          iso=$(ls out/*.iso)
+          test -n "$iso"
+          echo "ISO generada: $iso"
+          ls -lh out/
 
       - uses: actions/upload-artifact@v4
         with:

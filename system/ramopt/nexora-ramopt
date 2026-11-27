@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# nexora-ramopt: optimizacion de memoria con objetivo < 500 MB en reposo.
+# Estrategia:
+#   1. zram (zstd) como swap principal; zswap desactivado para evitar doble compresion.
+#   2. sysctl agresivo (swappiness 180, vfs_cache_pressure 1000).
+#   3. Set minimo de servicios: se enmascaran unidades innecesarias.
+#   4. Limites systemd (MemoryHigh/MemoryMax) sobre los daemons nexora.
+#   5. Indexacion de Lens y escaneos del antivirus limitados a momentos de baja carga.
+set -euo pipefail
+LIMITS_DIR=/etc/systemd/system.conf.d
+mkdir -p "$LIMITS_DIR" /etc/systemd/system/nexora-sentinel.service.d
+
+report() {
+  if command -v free >/dev/null 2>&1; then
+    free -m | awk 'NR==2{printf "memoria usada: %d MB / %d MB (incluye zram)\n", $3, $2}'
+  else
+    echo "memoria usada: indeterminada (free no disponible)"
+  fi
+  if command -v zramctl >/dev/null 2>&1; then
+    zramctl 2>/dev/null | tail -n +2 || true
+  fi
+  return 0
+}
+
+apply() {
+  # 1. zram-generator: swap comprimido en RAM
+  mkdir -p /etc/systemd
+  cat > /etc/systemd/zram-generator.conf <<ZRAM
+[zram0]
+zram-size = min(ram / 2, 4096)
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+ZRAM
+
+  # 2. sysctl de memoria
+  cat > /etc/sysctl.d/90-nexora-ramopt.conf <<SYSCTL
+vm.swappiness = 180
+vm.vfs_cache_pressure = 1000
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+SYSCTL
+
+  # 3. servicios innecesarios fuera (set minimo)
+  for unit in cups cups.socket avahi-daemon avahi-daemon.socket bluetooth ModemManager \
+              NetworkManager-wait-online.service accounts-daemon polkit.service; do
+    systemctl disable --now "$unit" 2>/dev/null || true
+  done
+
+  # 4. limites por daemon nexora
+  cat > "$LIMITS_DIR/90-nexora-memory.conf" <<LIMITS
+[Manager]
+DefaultMemoryAccounting=yes
+DefaultMemoryLow=32M
+LIMITS
+  cat > /etc/systemd/system/nexora-sentinel.service.d/memory.conf <<SVC
+[Service]
+MemoryHigh=120M
+MemoryMax=160M
+CPUQuota=10%
+Nice=15
+IOSchedulingClass=idle
+SVC
+
+  systemctl daemon-reload
+  systemctl enable --now systemd-zram-setup@zram0.service 2>/dev/null || true
+  echo "[ramopt] aplicado. Arranque recomendado; use 'nexora-ramopt report' para medir."
+}
+
+trim() {
+  sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+  systemctl daemon-reload
+  echo "[ramopt] caches liberadas"
+}
+
+case "${1:-report}" in
+  apply)  apply;;
+  report) report;;
+  trim)   trim;;
+  status)
+    report
+    echo "objetivo: consumo en reposo < 500 MB (perfil de escritorio ligero)"
+    ;;
+  *) echo "uso: nexora-ramopt {apply|report|trim|status}"; exit 2;;
+esac

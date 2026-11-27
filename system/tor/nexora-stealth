@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# nexora-stealth: modo sigilo de NexoraOS con niveles Lite/Balanced/Advanced/Isolated.
+#
+# Niveles:
+#   lite      : Tor activo como SOCKS; navegacion explicita via nexora-tor run.
+#   balanced  : proxy transparente (TCP a TransPort 9040, DNS a 5353).
+#   advanced  : balanced + interruptor nftables (solo el usuario tor puede salir).
+#   isolated  : advanced + microfono y camara bloqueados + sesiones aisladas.
+set -euo pipefail
+STATE=/var/lib/nexora/stealth
+mkdir -p "$STATE"
+TORCONF=/etc/tor/torrc
+
+start_tor() {
+  install -m 644 /usr/lib/nexora/tor/torrc.nexora "$TORCONF"
+  systemctl enable --now tor.service
+}
+
+apply_level() {
+  local level=$1
+  start_tor
+  case "$level" in
+    lite)
+      nft delete table inet nexora_stealth 2>/dev/null || true
+      ;;
+    balanced)
+      nft delete table inet nexora_stealth 2>/dev/null || true
+      cat > /etc/nexora/stealth-trans.nft <<NFT
+table ip nexora_trans {
+  chain out {
+    type nat hook output priority -100;
+    tcp dport { 80, 443 } redirect to :9040
+    udp dport 53 redirect to :5353
+  }
+}
+NFT
+      nft -f /etc/nexora/stealth-trans.nft
+      ;;
+    advanced)
+      nft delete table ip nexora_trans 2>/dev/null || true
+      nft -f /usr/lib/nexora/tor/killswitch.nft
+      ;;
+    isolated)
+      nft delete table ip nexora_trans 2>/dev/null || true
+      nft -f /usr/lib/nexora/tor/killswitch.nft
+      nexora-privacy block mic sistema 2>/dev/null || true
+      nexora-privacy block cam sistema 2>/dev/null || true
+      ;;
+    *) echo "nivel invalido: $level (lite|balanced|advanced|isolated)"; exit 2;;
+  esac
+  echo "$level" > "$STATE/level"
+  echo "[stealth] nivel $level activo"
+}
+
+off() {
+  nft delete table inet nexora_stealth 2>/dev/null || true
+  nft delete table ip nexora_trans 2>/dev/null || true
+  rm -f "$STATE/level"
+  echo "[stealth] modo sigilo desactivado"
+}
+
+status() {
+  level=$(cat "$STATE/level" 2>/dev/null || echo off)
+  echo "nivel: $level"
+  nexora-tor status 2>/dev/null || true
+  nft list table inet nexora_stealth >/dev/null 2>&1 && echo "kill-switch: activo" || echo "kill-switch: inactivo"
+}
+
+case "${1:-status}" in
+  on)     apply_level "${2:-balanced}";;
+  off)    off;;
+  status) status;;
+  level)  apply_level "${2:?falta nivel}";;
+  *) echo "uso: nexora-stealth {on [nivel]|off|status|level <nivel>}"; exit 2;;
+esac

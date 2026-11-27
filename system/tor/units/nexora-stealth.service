@@ -1,0 +1,12 @@
+[Unit]
+Description=NexoraOS: aplicacion del modo sigilo (nivel persistente)
+After=nexora-tor.service
+Requires=nexora-tor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nexora/tor/nexora-stealth level %I
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# nexora-bridge: compatibilidad universal (deb/rpm/AppImage) sin contaminar el sistema.
+set -euo pipefail
+cmd=${1:-list}; pkg=${2:-}
+case "$cmd" in
+  install-deb)
+    [[ -f $pkg ]] || { echo "uso: nexora-bridge install-deb <archivo.deb>"; exit 2; }
+    name=$(basename "$pkg" .deb)
+    podman import "$pkg" "nexora-deb:$name" 2>/dev/null || podman build -t "nexora-deb:$name" - <<< "FROM debian:stable
+COPY $(basename "$pkg") /tmp/
+RUN dpkg -i /tmp/$(basename "$pkg") || apt-get -f install -y"
+    echo "[bridge] instalado en contenedor nexora-deb:$name"
+    ;;
+  install-rpm)
+    [[ -f $pkg ]] || { echo "uso: nexora-bridge install-rpm <archivo.rpm>"; exit 2; }
+    name=$(basename "$pkg" .rpm)
+    podman build -t "nexora-rpm:$name" - <<< "FROM fedora:latest
+COPY $(basename "$pkg") /tmp/
+RUN dnf -y install /tmp/$(basename "$pkg")"
+    echo "[bridge] instalado en contenedor nexora-rpm:$name"
+    ;;
+  run-appimage)
+    [[ -f $pkg ]] || { echo "uso: nexora-bridge run-appimage <archivo.AppImage>"; exit 2; }
+    bwrap --dev-bind / / --tmpfs /tmp --die-with-parent --unshare-net \
+      bash -c "chmod +x '$pkg' && '$pkg' --appimage-extract-and-run"
+    ;;
+  list) podman images --format '{{.Repository}}:{{.Tag}}' | grep nexora || echo "sin contenedores nexora";;
+  *) echo "uso: nexora-bridge {install-deb|install-rpm|run-appimage|list}"; exit 2;;
+esac

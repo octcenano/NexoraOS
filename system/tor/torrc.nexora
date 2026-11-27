@@ -1,0 +1,15 @@
+# torrc.nexora: configuracion Tor de NexoraOS.
+# Modo cliente con SOCKS, DNS interno y proxy transparente.
+SocksPort 9050 IsolateDestAddr IsolateDestPort
+DNSPort 5353
+VirtualAddrNetworkIPv4 10.192.0.0/10
+AutomapHostsOnResolve 1
+TransPort 9040
+ControlPort 9051
+CookieAuthentication 1
+# Desactivar uso como nodo de salida: solo cliente.
+ExitPolicy reject *:*
+ExitRelay 0
+# Minimizar huella de datos.
+AvoidDiskWrites 1
+SafeLogging 1

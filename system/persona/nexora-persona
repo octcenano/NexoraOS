@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# nexora-persona: identidad cifrada sincronizable (dotfiles + claves + perfiles).
+set -euo pipefail
+KEY="$HOME/.config/nexora/persona.key"
+STAGE="/tmp/nexora-persona.$$"
+INCLUDES=(.config/fish .config/nexora .ssh .gnupg .gitconfig)
+cmd=${1:-status}; remote=${2:-}
+case "$cmd" in
+  push)
+    [[ -f $KEY ]] || { mkdir -p "$(dirname "$KEY")"; head -c 32 /dev/urandom > "$KEY"; chmod 600 "$KEY"; echo "[persona] clave generada en $KEY"; }
+    mkdir -p "$STAGE"
+    for item in "${INCLUDES[@]}"; do
+      [[ -e $HOME/$item ]] && cp -a "$HOME/$item" "$STAGE/" || true
+    done
+    tar -C "$STAGE" -cz . | age -e -i "$KEY" -o "$HOME/nexora-persona.tar.gz.age"
+    rm -rf "$STAGE"
+    [[ -n $remote ]] && scp "$HOME/nexora-persona.tar.gz.age" "$remote:" || true
+    echo "[persona] identidad empaquetada"
+    ;;
+  pull)
+    src=${2:-$HOME/nexora-persona.tar.gz.age}
+    [[ -f $KEY ]] || { echo "falta la clave persona: $KEY"; exit 1; }
+    mkdir -p "$STAGE"
+    age -d -i "$KEY" -o "$STAGE/persona.tar.gz" "$src"
+    tar -C "$HOME" -xzf "$STAGE/persona.tar.gz"
+    rm -rf "$STAGE"
+    echo "[persona] identidad restaurada"
+    ;;
+  status)
+    [[ -f $KEY ]] && echo "clave: presente" || echo "clave: ausente"
+    [[ -f $HOME/nexora-persona.tar.gz.age ]] && echo "paquete: presente" || echo "paquete: ausente"
+    ;;
+  *) echo "uso: nexora-persona {push|pull|status} [remoto]"; exit 2;;
+esac

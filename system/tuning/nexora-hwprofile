@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# nexora-hwprofile: deteccion de hardware y sysctl por perfil (game|ai|office|meteo).
+set -euo pipefail
+CONF=/etc/nexora/hwprofile.conf
+[[ -f $CONF ]] && source "$CONF"
+
+detect() {
+  local v
+  v=$(grep -m1 vendor_id /proc/cpuinfo 2>/dev/null | awk '{print $3}') || v=""
+  if [[ $v == AuthenticAMD ]]; then cpu=amd; else cpu=intel; fi
+  gpu=nvidia
+  if lspci 2>/dev/null | grep -qi 'vga.*amd'; then gpu=amd; fi
+  if lspci 2>/dev/null | grep -qi 'vga.*intel'; then gpu=intel; fi
+  laptop=false
+  if [[ -d /sys/class/power_supply/BAT0 ]]; then laptop=true; fi
+  ram_mb=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null) || ram_mb=0
+  if [[ -e /sys/kernel/sched_ext ]]; then sched_ext=on; else sched_ext=off; fi
+  return 0
+}
+
+apply() {
+  local p=$1
+  detect
+  case "$p" in
+    game)
+      cat > /etc/sysctl.d/90-nexora-game.conf <<SYSCTL
+vm.max_map_count = 2147483642
+vm.swappiness = 10
+kernel.sched_ext = 1
+SYSCTL
+      [[ $gpu == nvidia ]] && modprobe nvidia NVreg_EnablePCIeGen3=1 2>/dev/null || true
+      echo "[hwprofile] game aplicado (cpu=$cpu gpu=$gpu sched_ext=$sched_ext)"
+      ;;
+    ai)
+      cat > /etc/sysctl.d/90-nexora-ai.conf <<SYSCTL
+vm.overcommit_memory = 1
+vm.swappiness = 5
+SYSCTL
+      echo "[hwprofile] ai aplicado (numa=$([[ -e /sys/devices/system/node/node1 ]] && echo yes || echo no))"
+      ;;
+    office)
+      cat > /etc/sysctl.d/90-nexora-office.conf <<SYSCTL
+vm.swappiness = 180
+vm.vfs_cache_pressure = 50
+SYSCTL
+      echo "[hwprofile] office aplicado (laptop=$laptop)"
+      ;;
+    meteo)
+      cat > /etc/sysctl.d/90-nexora-meteo.conf <<SYSCTL
+vm.swappiness = 1
+fs.aio-max-nr = 1048576
+net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_wmem = 4096 65536 33554432
+SYSCTL
+      echo "[hwprofile] meteo aplicado"
+      ;;
+    *) echo "uso: nexora-hwprofile apply {game|ai|office|meteo}"; exit 2;;
+  esac
+}
+
+explain() {
+  detect
+  echo "cpu=$cpu gpu=$gpu laptop=$laptop ram=${ram_mb}MB sched_ext=$sched_ext"
+  echo "Perfiles: game (latencia, NTSYNC, scx_lavd), ai (overcommit, NUMA, ROCm/CUDA),"
+  echo "office (bajo consumo, scx_bpfland), meteo (AIO, TCP amplio, swappiness minima)."
+}
+
+case "${1:-status}" in
+  detect) detect; explain;;
+  apply) apply "${2:?falta perfil}";;
+  explain) explain;;
+  status) explain;;
+  *) echo "uso: nexora-hwprofile {detect|apply|explain|status}"; exit 2;;
+esac

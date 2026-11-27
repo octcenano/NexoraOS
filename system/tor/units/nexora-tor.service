@@ -1,0 +1,13 @@
+[Unit]
+Description=NexoraOS: cliente Tor con SOCKS, DNS y proxy transparente
+After=network.target
+
+[Service]
+Type=simple
+User=tor
+ExecStart=/usr/bin/tor --runasdaemon 0 -f /etc/tor/torrc
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+# killswitch.nft: interruptor de red del modo sigilo.
+# Solo el usuario "tor" y el trafico local pueden salir; el resto se descarta.
+table inet nexora_stealth {
+  chain output {
+    type filter hook output priority 0; policy drop;
+    oif "lo" accept
+    skuid "tor" accept
+    # DNS y TCP no autorizados fuera del circuito Tor: denegados
+    counter drop
+  }
+}

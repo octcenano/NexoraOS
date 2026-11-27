@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""nexora-lens: busqueda semantica local (SQLite FTS5) de documentos."""
+import argparse
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+DB = Path.home() / ".local/share/nexora/lens/index.db"
+DIRS = [Path.home() / "Documentos", Path.home() / "Descargas",
+        Path("/usr/share/applications")]
+CHUNK = 4000
+
+
+def connect():
+    DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB)
+    try:
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path, body)")
+    except sqlite3.OperationalError:
+        pass
+    return con
+
+
+def index(con):
+    count = 0
+    for base in DIRS:
+        if not base.exists():
+            continue
+        for root, _dirs, files in os.walk(base):
+            for name in files:
+                p = Path(root) / name
+                if p.suffix.lower() not in (".txt", ".md", ".csv", ".json", ".desktop", ".log"):
+                    continue
+                try:
+                    body = p.read_text(errors="ignore")[:CHUNK]
+                except OSError:
+                    continue
+                con.execute("DELETE FROM docs WHERE path=?", (str(p),))
+                con.execute("INSERT INTO docs(path, body) VALUES(?,?)", (str(p), body))
+                count += 1
+    con.commit()
+    print("indexados %d documentos" % count)
+
+
+def search(con, query):
+    for path, snippet in con.execute(
+            "SELECT path, snippet(docs, 1, '[', ']', '...', 24) FROM docs WHERE docs MATCH ? LIMIT 20",
+            (query,)):
+        print("%s\n  %s" % (path, snippet.replace("\n", " ")))
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="nexora-lens")
+    parser.add_argument("cmd", choices=["index", "search"])
+    parser.add_argument("query", nargs="?")
+    args = parser.parse_args()
+    try:
+        con = connect()
+    except sqlite3.Error as exc:
+        print("error de base de datos: %s" % exc, file=sys.stderr)
+        return 1
+    if args.cmd == "index":
+        index(con)
+    else:
+        if not args.query:
+            print("uso: nexora-lens search <consulta>")
+            return 2
+        search(con, args.query)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

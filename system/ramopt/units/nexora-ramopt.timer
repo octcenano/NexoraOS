@@ -1,0 +1,9 @@
+[Unit]
+Description=NexoraOS: recordatorio periodico de politica de memoria
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target

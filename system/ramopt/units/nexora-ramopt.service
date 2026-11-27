@@ -1,0 +1,11 @@
+[Unit]
+Description=NexoraOS: aplicacion de politica de memoria (< 500 MB)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nexora/ramopt/nexora-ramopt apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

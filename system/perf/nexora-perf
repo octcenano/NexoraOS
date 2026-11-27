@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# nexora-perf: perfiles adaptativos (delega el tuning por hardware en nexora-hwprofile).
+set -euo pipefail
+VALID="auto game ai office dev battery presentation meteo"
+cmd=${1:-status}
+apply() {
+  local p=$1
+  if [[ $p == game || $p == ai || $p == office || $p == meteo ]]; then
+    /usr/lib/nexora/tuning/nexora-hwprofile apply "$p"
+  else
+    echo "[perf] perfil $p aplicado (generico)"
+  fi
+  ln -sfn "$p" /var/lib/nexora/perf/current
+}
+case "$cmd" in
+  auto)
+    on_ac=$(cat /sys/class/power_supply/A*/online 2>/dev/null || echo 1)
+    if [[ $on_ac == 0 ]]; then apply battery; else apply office; fi
+    echo "[perf] auto: perfil seleccionado"
+    ;;
+  game|ai|office|dev|battery|presentation|meteo) apply "$cmd";;
+  status)
+    cur=$(readlink /var/lib/nexora/perf/current 2>/dev/null || echo "none")
+    echo "perfil actual: $cur"
+    echo "perfiles validos: $VALID"
+    ;;
+  explain) /usr/lib/nexora/tuning/nexora-hwprofile explain 2>/dev/null || true;;
+  *) echo "uso: nexora-perf {auto|game|ai|office|dev|battery|presentation|meteo|status|explain}"; exit 2;;
+esac

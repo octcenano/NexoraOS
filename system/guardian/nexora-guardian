@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""nexora-guardian: copiloto local (LLM en el dispositivo) con herramientas MCP
+y confirmacion humana antes de ejecutar. Punto de enganche LLM_HOOK para
+llama.cpp / servidor local."""
+import json
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+AUDIT = Path.home() / ".local/share/nexora/guardian/audit.jsonl"
+FORBIDDEN_PREFIXES = ("rm -rf /", "mkfs", "dd if=", ":(){", "shutdown", "reboot -f")
+LLM_HOOK = "http://127.0.0.1:8080/v1/chat/completions"
+
+
+def audit(tool, args, result):
+    AUDIT.parent.mkdir(parents=True, exist_ok=True)
+    with AUDIT.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": time.time(), "tool": tool, "args": args,
+                             "result": result[:500]}) + "\n")
+
+
+def tool_query_packages(pattern):
+    r = subprocess.run(["pacman", "-Ss", pattern], capture_output=True, text=True)
+    return r.stdout[:2000]
+
+
+def tool_read_journal(unit, lines=50):
+    r = subprocess.run(["journalctl", "-u", unit, "-n", str(lines), "--no-pager"],
+                       capture_output=True, text=True)
+    return r.stdout[:3000]
+
+
+def tool_explain_error(text):
+    known = {
+        "failed to synchronize": "Sin red o espejo de pacman inaccesible. Pruebe: pacman -Syu",
+        "target not found": "El paquete no existe en los repositorios activos.",
+        "could not satisfy dependencies": "Conflicto de dependencias; revise pacman -Qi del paquete.",
+        "permission denied": "Faltan permisos; considere sudo o capacidades especificas.",
+    }
+    for key, advice in known.items():
+        if key in text.lower():
+            return advice
+    return "Error no catalogado. Revise journalctl -p err -b"
+
+
+def tool_propose_command(cmd):
+    for bad in FORBIDDEN_PREFIXES:
+        if cmd.startswith(bad):
+            return {"blocked": True, "reason": "comando prohibido por politica"}
+    return {"blocked": False, "confirm": "Ejecutar: %s [s/N]" % cmd}
+
+
+def main():
+    tools = {
+        "query_packages": tool_query_packages,
+        "read_journal": tool_read_journal,
+        "explain_error": tool_explain_error,
+        "propose_command": tool_propose_command,
+    }
+    if len(sys.argv) >= 3:
+        name, arg = sys.argv[1], " ".join(sys.argv[2:])
+    else:
+        print("uso: nexora-guardian <herramienta> <argumento>")
+        print("herramientas: " + ", ".join(tools))
+        return 2
+    if name not in tools:
+        print("herramienta desconocida: %s" % name, file=sys.stderr)
+        return 2
+    result = tools[name](arg)
+    if isinstance(result, dict) and result.get("confirm"):
+        answer = input(result["confirm"]).strip().lower()
+        if answer == "s":
+            subprocess.run(shlex.split(arg))
+            result = {"executed": True}
+        else:
+            result = {"executed": False}
+    audit(name, arg, str(result))
+    print(result if isinstance(result, str) else json.dumps(result, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

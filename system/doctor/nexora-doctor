@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""nexora-doctor: autodiagnostico y autocuracion del sistema."""
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+LOCK = "/var/lib/pacman/db.lck"
+
+
+def sh(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def check_failed_units():
+    r = sh(["systemctl", "--failed", "--no-legend"])
+    units = [line.split()[0] for line in r.stdout.splitlines() if line.strip()]
+    return units, ["systemctl", "reset-failed"]
+
+
+def check_pacman_lock():
+    if os.path.exists(LOCK):
+        return ["bloqueo de pacman presente (%s)" % LOCK], []
+    return [], []
+
+
+def check_orphans():
+    r = sh(["pacman", "-Qtdq"])
+    orphans = r.stdout.split()
+    return orphans, ["pacman", "-Rns", "--noconfirm"] + orphans
+
+
+def check_disk():
+    st = os.statvfs("/")
+    free_gb = st.f_bavail * st.f_frsize / 2**30
+    total_gb = st.f_blocks * st.f_frsize / 2**30
+    if free_gb / total_gb < 0.1:
+        return ["espacio libre bajo: %.1f GB" % free_gb], []
+    return [], []
+
+
+def check_services():
+    wanted = ["nexora-sentinel.service"]
+    missing = []
+    for unit in wanted:
+        r = sh(["systemctl", "is-active", unit])
+        if r.stdout.strip() != "active":
+            missing.append(unit)
+    return missing, ["systemctl", "start"]
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="nexora-doctor")
+    parser.add_argument("--auto", action="store_true", help="reparacion segura automatica")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    report = {}
+    for name, fn in [("failed_units", check_failed_units),
+                     ("pacman_lock", check_pacman_lock),
+                     ("orphans", check_orphans),
+                     ("disk", check_disk),
+                     ("nexora_services", check_services)]:
+        issues, repair = fn()
+        report[name] = {"issues": issues, "repair": repair}
+        if issues and args.auto and repair:
+            for cmd in repair:
+                print("[doctor] reparando: %s" % " ".join(cmd))
+                sh(cmd)
+    if args.json:
+        print(json.dumps(report, indent=1))
+    else:
+        total = sum(len(v["issues"]) for v in report.values())
+        print("nexora-doctor: %d incidencias%s" % (total, " (reparadas)" if args.auto else ""))
+        for name, data in report.items():
+            for issue in data["issues"]:
+                print("  [%s] %s" % (name, issue))
+    return 1 if any(v["issues"] for v in report.values()) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

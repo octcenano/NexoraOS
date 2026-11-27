@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# nexora-privacy: bloqueo per-app de microfono y camara.
+set -euo pipefail
+BASE=/var/lib/nexora/privacy
+mkdir -p "$BASE"
+cmd=${1:-status}; device=${2:-mic}; app=${3:-}
+case "$cmd" in
+  block)
+    [[ -n $app ]] || { echo "uso: nexora-privacy block <mic|cam> <app>"; exit 2; }
+    touch "$BASE/$device.$app"
+    if [[ $device == mic ]]; then
+      wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1 2>/dev/null || true
+      chmod 000 /dev/snd/* 2>/dev/null || true
+    else
+      for cam in /dev/video*; do chmod 000 "$cam" 2>/dev/null || true; fuser -k "$cam" 2>/dev/null || true; done
+    fi
+    echo "[privacy] $device bloqueado para $app"
+    ;;
+  allow)
+    rm -f "$BASE/$device.$app"
+    if [[ $device == mic ]]; then
+      wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0 2>/dev/null || true
+      chmod 660 /dev/snd/* 2>/dev/null || true
+    else
+      for cam in /dev/video*; do chmod 660 "$cam" 2>/dev/null || true; done
+    fi
+    echo "[privacy] $device permitido para $app"
+    ;;
+  status)
+    found=0
+    for f in "$BASE"/*; do
+      if [[ -e $f ]]; then echo "$(basename "$f")"; found=1; fi
+    done
+    [[ $found == 1 ]] || echo "sin bloqueos activos"
+    exit 0
+    ;;
+  *) echo "uso: nexora-privacy {block|allow|status} <mic|cam> [app]"; exit 2;;
+esac

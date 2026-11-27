@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# nexora-tor: envoltorio de Tor para ejecutar comandos a traves de Tor.
+set -euo pipefail
+cmd=${1:-status}
+case "$cmd" in
+  run)
+    shift
+    exec torsocks "$@"
+    ;;
+  status)
+    systemctl is-active tor.service 2>/dev/null || true
+    if (echo >/dev/tcp/127.0.0.1/9050) 2>/dev/null; then
+      echo "SOCKS 9050: activo"
+    else
+      echo "SOCKS 9050: inactivo"
+    fi
+    if (echo >/dev/tcp/127.0.0.1/9051) 2>/dev/null; then
+      echo "control 9051: activo"
+    else
+      echo "control 9051: inactivo"
+    fi
+    ;;
+  *)
+    echo "uso: nexora-tor {run <comando>|status}"
+    exit 2
+    ;;
+esac

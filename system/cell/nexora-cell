@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# nexora-cell: sandbox por aplicacion con bubblewrap, regido por un manifiesto .cell.
+# Manifiesto (junto al ejecutable o en ~/.config/nexora/cells/<app>.cell):
+#   network=false
+#   filesystem=/home/usuario/Documentos:ro
+set -euo pipefail
+APP=${1:?uso: nexora-cell <app> [args...]}
+shift || true
+manifest=""
+for cand in "$HOME/.config/nexora/cells/$APP.cell" "/etc/nexora/cells/$APP.cell"; do
+  [[ -f $cand ]] && manifest=$cand && break
+done
+net=true; fs_args=()
+if [[ -n $manifest ]]; then
+  while IFS='=' read -r k v; do
+    case "$k" in
+      network) net=$v;;
+      filesystem)
+        path=${v%%:*}; mode=${v##*:}
+        [[ $mode == ro ]] && fs_args+=(--ro-bind "$path" "$path") || fs_args+=(--bind "$path" "$path")
+        ;;
+    esac
+  done < "$manifest"
+fi
+args=(--dev /dev --proc /proc --tmpfs /tmp --unshare-all --die-with-parent)
+[[ $net == true ]] || args+=(--unshare-net)
+exec bwrap "${args[@]}" "${fs_args[@]}" \
+  --ro-bind /usr /usr --ro-bind /etc /etc --bind "$HOME" "$HOME" \
+  -- "$APP" "$@"

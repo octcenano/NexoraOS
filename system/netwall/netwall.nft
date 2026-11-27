@@ -1,0 +1,7 @@
+table inet nexora_netwall {
+  set deny_map { type inet_service; flags timeout; }
+  chain output {
+    type filter hook output priority 0; policy accept;
+    meta cgroupname "no-network" drop
+  }
+}

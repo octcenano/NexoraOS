@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""nexora-antivirus: subrama de Nexora Sentinel.
+
+Funciones:
+  1. Analisis de archivos descargados (vigilancia de ~/Descargas y rutas configuradas).
+  2. Deteccion de escalada de privilegios (deriva SUID/SGID, sudoers, patrones de exploit).
+
+Uso:
+  nexora-antivirus watch                # demonio: vigilancia + barridos periodicos
+  nexora-antivirus scan <ruta>          # analisis puntual
+  nexora-antivirus baseline --update    # regenera la linea base SUID/SGID
+  nexora-antivirus privesc              # barrido manual de escalada de privilegios
+  nexora-antivirus status               # resumen de hallazgos y configuracion
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import time
+import zipfile
+from pathlib import Path
+
+QUARANTINE = Path("/var/lib/nexora/antivirus/quarantine")
+SIGNATURES = Path("/usr/share/nexora/antivirus/signatures.json")
+SIGNATURES_FALLBACK = Path(__file__).resolve().parent / "signatures" / "signatures.json"
+BASELINE = Path("/var/lib/nexora/antivirus/suid-baseline.json")
+EVENTS = Path("/var/lib/nexora/antivirus/events.jsonl")
+WATCH_DIRS = [Path.home() / "Descargas", Path.home() / "Downloads"]
+SCAN_ROOTS = ("/usr", "/bin", "/sbin", "/usr/local", "/opt")
+PRIVESC_SWEEP_SECONDS = 300
+POLL_SECONDS = 8
+MAX_TEXT_BYTES = 2 * 1024 * 1024
+
+TEXT_SUFFIXES = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ps1", ".pl",
+                 ".rb", ".php", ".txt", ".md", ".desktop", ".service", ".conf"}
+DOC_SUFFIXES = {".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".doc", ".xls", ".ppt"}
+SEVERITY_RANK = {"critical": 3, "high": 2, "medium": 1, "info": 0}
+
+
+def log_event(kind, path, severity, detail, action="logged"):
+    EVENTS.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "kind": kind,
+        "path": str(path),
+        "severity": severity,
+        "detail": detail,
+        "action": action,
+    }
+    with EVENTS.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event) + "\n")
+    if severity in ("critical", "high"):
+        print("[%s] %s: %s -> %s (%s)" % (severity.upper(), kind, path, detail, action),
+              file=sys.stderr)
+
+
+def load_signatures():
+    for candidate in (SIGNATURES, SIGNATURES_FALLBACK):
+        if candidate.exists():
+            return json.loads(candidate.read_text(encoding="utf-8"))
+    raise SystemExit("No se encontro la base de firmas de nexora-antivirus")
+
+
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def quarantine(path, reason):
+    QUARANTINE.mkdir(parents=True, exist_ok=True)
+    target = QUARANTINE / ("%s-%s" % (time.strftime("%Y%m%d-%H%M%S"), path.name))
+    try:
+        shutil.move(str(path), str(target))
+        os.chmod(target, 0)
+        log_event("quarantine", path, "critical", reason, "moved:%s" % target)
+        return str(target)
+    except OSError as exc:
+        log_event("quarantine-failed", path, "critical", "%s: %s" % (reason, exc))
+        return ""
+
+
+def check_hash(path, sigs):
+    hit = sigs.get("hashes", {}).get(sha256_of(path))
+    if hit:
+        return {"rule": "AV-HASH", "name": hit["name"], "severity": hit["severity"]}
+    return None
+
+
+def check_text_patterns(path, sigs):
+    if path.suffix.lower() not in TEXT_SUFFIXES:
+        return []
+    try:
+        blob = path.read_bytes()[:MAX_TEXT_BYTES]
+        text = blob.decode("utf-8", errors="ignore")
+    except OSError:
+        return []
+    findings = []
+    for rule in sigs.get("patterns", []):
+        if rule.get("target") != "text":
+            continue
+        try:
+            if re.search(rule["pattern"], text):
+                findings.append({"rule": rule["id"], "name": rule["name"],
+                                 "severity": rule["severity"]})
+        except re.error:
+            continue
+    return findings
+
+
+def check_macros(path):
+    if path.suffix.lower() not in DOC_SUFFIXES:
+        return []
+    findings = []
+    try:
+        if path.suffix.lower() in (".doc", ".xls", ".ppt"):
+            with path.open("rb") as fh:
+                if b"VBA" in fh.read(MAX_TEXT_BYTES):
+                    findings.append({"rule": "AV-MACRO-OLE",
+                                     "name": "Documento OLE con macros VBA",
+                                     "severity": "high"})
+        else:
+            with zipfile.ZipFile(path) as zf:
+                if any("vbaProject.bin" in name for name in zf.namelist()):
+                    findings.append({"rule": "AV-MACRO-OOXML",
+                                     "name": "Documento OOXML con macros VBA",
+                                     "severity": "high"})
+    except (OSError, zipfile.BadZipFile):
+        pass
+    return findings
+
+
+def check_privesc_file(path):
+    """Un ELF con bit SUID descargado por el usuario es una escalada tipica."""
+    try:
+        mode = path.stat().st_mode
+        with path.open("rb") as fh:
+            magic = fh.read(4)
+    except OSError:
+        return []
+    findings = []
+    if magic == b"\x7fELF":
+        if mode & stat.S_ISUID:
+            findings.append({"rule": "AV-PRIV-ELF-SUID",
+                             "name": "Binario ELF descargado con bit SUID",
+                             "severity": "critical"})
+        elif mode & stat.S_ISGID:
+            findings.append({"rule": "AV-PRIV-ELF-SGID",
+                             "name": "Binario ELF descargado con bit SGID",
+                             "severity": "high"})
+    return findings
+
+
+def scan_file(path, sigs, auto_quarantine=True):
+    path = Path(path)
+    if not path.is_file():
+        return []
+    findings = []
+    hash_hit = check_hash(path, sigs)
+    if hash_hit:
+        findings.append(hash_hit)
+    findings.extend(check_text_patterns(path, sigs))
+    findings.extend(check_macros(path))
+    findings.extend(check_privesc_file(path))
+    for name_rule in sigs.get("filenames", []):
+        if name_rule in path.name.lower():
+            findings.append({"rule": "AV-NAME",
+                             "name": "Nombre sospechoso: %s" % name_rule,
+                             "severity": "high"})
+    if not findings:
+        return []
+    worst = max(SEVERITY_RANK.get(f["severity"], 0) for f in findings)
+    rules = "; ".join(f["rule"] for f in findings)
+    if auto_quarantine and worst >= 2:
+        target = quarantine(path, rules)
+        action = "quarantined" if target else "quarantine-failed"
+    else:
+        action = "detected"
+        log_event("scan", path, max(findings, key=lambda f: SEVERITY_RANK.get(f["severity"], 0))["severity"], rules, action)
+    return findings
+
+
+# ------------------------------------------------------------- escalada de privilegios
+
+def iter_suid_files():
+    for root in SCAN_ROOTS:
+        base = Path(root)
+        if not base.exists():
+            continue
+        for dirpath, _dirnames, filenames in os.walk(base):
+            for name in filenames:
+                p = Path(dirpath) / name
+                try:
+                    mode = p.lstat().st_mode
+                except OSError:
+                    continue
+                if mode & (stat.S_ISUID | stat.S_ISGID):
+                    yield p
+
+
+def baseline_update():
+    BASELINE.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    for p in iter_suid_files():
+        try:
+            kind = "suid" if p.stat().st_mode & stat.S_ISUID else "sgid"
+        except OSError:
+            continue
+        data[str(p)] = kind
+    BASELINE.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    log_event("baseline", BASELINE, "info", "%d binarios registrados" % len(data))
+    return BASELINE
+
+
+def baseline_load():
+    if not BASELINE.exists():
+        baseline_update()
+    return json.loads(BASELINE.read_text(encoding="utf-8"))
+
+
+def privesc_sweep(auto_quarantine=True):
+    """Detecta binarios SUID/SGID nuevos y cambios en sudoers."""
+    findings = []
+    current = {str(p) for p in iter_suid_files()}
+    known = baseline_load()
+    for entry in sorted(current - set(known)):
+        detail = "Binario SUID/SGID nuevo fuera de la linea base"
+        findings.append({"path": entry, "rule": "AV-PRIV-NEW-SUID",
+                         "name": detail, "severity": "critical"})
+        if auto_quarantine:
+            action = "quarantined" if quarantine(Path(entry), detail) else "quarantine-failed"
+        else:
+            action = "detected"
+        log_event("privesc", entry, "critical", detail, action)
+    for entry in sorted(set(known) - current):
+        log_event("privesc-removed", entry, "medium",
+                  "Binario SUID/SGID de la linea base ha desaparecido")
+
+    sudoers = [Path("/etc/sudoers")]
+    sudoers_dir = Path("/etc/sudoers.d")
+    if sudoers_dir.exists():
+        sudoers.extend(sorted(sudoers_dir.glob("*")))
+    state_file = BASELINE.parent / "sudoers-state.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    new_state = {}
+    for s in sudoers:
+        try:
+            st = s.stat()
+        except OSError:
+            continue
+        new_state[str(s)] = [st.st_mtime_ns, st.st_size]
+        if str(s) in state and state[str(s)] != new_state[str(s)]:
+            findings.append({"path": str(s), "rule": "AV-PRIV-SUDOERS",
+                             "name": "Modificacion de configuracion sudo",
+                             "severity": "critical"})
+            log_event("privesc", s, "critical", "Modificacion de sudoers detectada")
+    state_file.write_text(json.dumps(new_state), encoding="utf-8")
+    return findings
+
+
+# ------------------------------------------------------------- vigilancia continua
+
+def watch():
+    sigs = load_signatures()
+    baseline_load()
+    print("nexora-antivirus: vigilancia activa", flush=True)
+    last_sweep = 0.0
+    seen = {}
+    while True:
+        for directory in WATCH_DIRS:
+            if not directory.exists():
+                continue
+            for candidate in directory.rglob("*"):
+                if not candidate.is_file():
+                    continue
+                try:
+                    st = candidate.stat()
+                except OSError:
+                    continue
+                key = str(candidate)
+                mark = (st.st_mtime, st.st_size)
+                if seen.get(key) == mark:
+                    continue
+                seen[key] = mark
+                scan_file(candidate, sigs)
+        if time.time() - last_sweep >= PRIVESC_SWEEP_SECONDS:
+            privesc_sweep()
+            last_sweep = time.time()
+        time.sleep(POLL_SECONDS)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="nexora-antivirus")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("watch")
+    p_scan = sub.add_parser("scan")
+    p_scan.add_argument("path")
+    p_base = sub.add_parser("baseline")
+    p_base.add_argument("--update", action="store_true")
+    p_priv = sub.add_parser("privesc")
+    p_priv.add_argument("--no-quarantine", action="store_true")
+    sub.add_parser("status")
+    args = parser.parse_args()
+
+    if args.cmd == "watch":
+        watch()
+    elif args.cmd == "scan":
+        findings = scan_file(Path(args.path), load_signatures())
+        print(json.dumps(findings, indent=1, ensure_ascii=False))
+        return 1 if findings else 0
+    elif args.cmd == "baseline":
+        baseline_update()
+        print("Linea base SUID/SGID actualizada en %s" % BASELINE)
+    elif args.cmd == "privesc":
+        findings = privesc_sweep(auto_quarantine=not args.no_quarantine)
+        print(json.dumps(findings, indent=1, ensure_ascii=False))
+        return 1 if findings else 0
+    elif args.cmd == "status":
+        if EVENTS.exists():
+            lines = EVENTS.read_text(encoding="utf-8").splitlines()
+            print("Eventos registrados: %d" % len(lines))
+            for line in lines[-10:]:
+                print(line)
+        else:
+            print("Sin eventos registrados.")
+        print("Linea base SUID: %s" % BASELINE.exists())
+        print("Cuarentena: %s" % QUARANTINE)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

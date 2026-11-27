@@ -1,0 +1,15 @@
+[Unit]
+Description=Nexora Sentinel: deteccion conductual y antivirus
+After=local-fs.target
+
+[Service]
+ExecStartPre=/usr/lib/nexora/sentinel/antivirus/nexora-antivirus baseline --update
+ExecStart=/usr/lib/nexora/sentinel/nexora-sentinel
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/nexora/antivirus
+
+[Install]
+WantedBy=multi-user.target

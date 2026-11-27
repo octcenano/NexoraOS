@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""nexora-blueprint: el estado declarativo del sistema (TOML idempotente)."""
+import argparse
+import shutil
+import subprocess
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    tomllib = None
+
+BLUEPRINT = "/etc/nexora/blueprint.toml"
+
+
+def load(path):
+    if tomllib is None:
+        raise SystemExit("Se requiere Python 3.11+ (tomllib)")
+    with open(path, "rb") as fh:
+        return tomllib.load(fh)
+
+
+def run(cmd, dry):
+    print("  +%s" % " ".join(cmd))
+    if not dry:
+        subprocess.run(cmd, check=False)
+
+
+def apply(bp, dry=False):
+    for pkg in bp.get("packages", {}).get("pacman", []):
+        if shutil.which(pkg) is None:
+            run(["sudo", "pacman", "-S", "--needed", "--noconfirm", pkg], dry)
+    for pkg in bp.get("packages", {}).get("flatpak", []):
+        run(["flatpak", "install", "-y", "--noninteractive", pkg], dry)
+    for unit in bp.get("services", {}).get("enable", []):
+        run(["systemctl", "enable", "--now", unit], dry)
+    for unit in bp.get("services", {}).get("disable", []):
+        run(["systemctl", "disable", "--now", unit], dry)
+    for key, value in bp.get("sysctl", {}).items():
+        run(["sudo", "sysctl", "-w", "%s=%s" % (key, value)], dry)
+    print("blueprint aplicado" + (" (simulacion)" if dry else ""))
+
+
+def diff(bp):
+    print("Diferencias respecto al blueprint:")
+    for pkg in bp.get("packages", {}).get("pacman", []):
+        if shutil.which(pkg) is None:
+            print("  - paquete ausente: %s" % pkg)
+    for unit in bp.get("services", {}).get("enable", []):
+        r = subprocess.run(["systemctl", "is-enabled", unit], capture_output=True, text=True)
+        if r.returncode != 0:
+            print("  - servicio no habilitado: %s" % unit)
+    print("(fin del diff)")
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="nexora-blueprint")
+    parser.add_argument("cmd", choices=["apply", "diff"])
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--file", default=BLUEPRINT)
+    args = parser.parse_args()
+    bp = load(args.file)
+    if args.cmd == "apply":
+        apply(bp, args.dry_run)
+    else:
+        diff(bp)
+
+
+if __name__ == "__main__":
+    main()

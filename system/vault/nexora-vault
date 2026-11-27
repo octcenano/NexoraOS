@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# nexora-vault: secretos sellados con TPM2 (fallback GPG).
+set -euo pipefail
+DIR=${NEXORA_VAULT:-$HOME/.local/share/nexora/vault}
+mkdir -p "$DIR"
+cmd=${1:-list}
+case "$cmd" in
+  seal)  # seal <nombre> : lee de stdin y sella
+    name=${2:?uso: nexora-vault seal <nombre>}
+    tmp=$(mktemp)
+    cat > "$tmp"
+    if tpm2_getcap properties-fixed >/dev/null 2>&1; then
+      tpm2_createprimary -C o -c "$DIR/$name.ctx" -Q
+      tpm2_encodeobject -c "$DIR/$name.ctx" -o "$DIR/$name.pub" -n "$DIR/$name.priv" -Q 2>/dev/null || true
+      tpm2_seal -c "$DIR/$name.ctx" -o "$DIR/$name.sealed" -i "$tmp" -Q && rm -f "$tmp" "$DIR/$name.ctx"
+      echo "[vault] $name sellado con TPM2"
+    else
+      gpg --batch --yes --symmetric --cipher-algo AES256 -o "$DIR/$name.gpg" "$tmp" && rm -f "$tmp"
+      echo "[vault] $name sellado con GPG (TPM2 no disponible)"
+    fi
+    ;;
+  read)
+    name=${2:?uso: nexora-vault read <nombre>}
+    if [[ -f $DIR/$name.sealed ]]; then
+      tpm2_unseal -c "$DIR/$name.ctx" -o - 2>/dev/null || { echo "recreate ctx required"; exit 1; }
+    elif [[ -f $DIR/$name.gpg ]]; then
+      gpg --decrypt "$DIR/$name.gpg"
+    else
+      echo "secreto no encontrado: $name" >&2; exit 1
+    fi
+    ;;
+  list) ls -1 "$DIR" | sed 's/\.\(sealed\|gpg\|pub\|priv\)$//' | sort -u;;
+  seal-check)
+    if tpm2_getcap properties-fixed >/dev/null 2>&1; then echo "TPM2 disponible"; else echo "TPM2 no disponible: se usa GPG"; fi
+    ;;
+  *) echo "uso: nexora-vault {seal|read|list|seal-check}"; exit 2;;
+esac

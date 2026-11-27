@@ -1,0 +1,12 @@
+[Unit]
+Description=NexoraOS: carga de sondas eBPF (Sentinel, Antivirus, NetWall)
+After=systemd-modules-load.service local-fs.target
+ConditionPathExists=/sys/kernel/btf/vmlinux
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/nexora/ebpf/nexora-ebpf-loader.py load
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# nexora-netwall: cortafuegos por aplicacion (cgroup v2 + nftables + mapa eBPF).
+set -euo pipefail
+CONF=/etc/nexora/netwall.nft
+cmd=${1:-show}
+case "$cmd" in
+  set)
+    app=${2:?uso: nexora-netwall set <app> <allow|deny>}; action=${3:?allow|deny}
+    mapfile -t pids < <(pgrep -f "$app" || true)
+    [[ ${#pids[@]} -gt 0 ]] || { echo "sin procesos de $app"; exit 1; }
+    for pid in "${pids[@]}"; do
+      cgroup="/sys/fs/cgroup/nexora-netwall/$app/$pid"
+      mkdir -p "$(dirname "$cgroup")"
+      echo "$pid" > "$cgroup/cgroup.procs" 2>/dev/null || true
+    done
+    nft add table inet nexora_netwall 2>/dev/null || true
+    nft add set inet nexora_netwall deny_map '{ type inet_service ; flags timeout ; }' 2>/dev/null || true
+    if [[ $action == deny ]]; then
+      nft add rule inet nexora_netwall output meta cgroup "$app" drop
+      echo "[netwall] $app: salida denegada"
+    else
+      echo "[netwall] $app: salida permitida"
+    fi
+    ;;
+  show) [[ -f $CONF ]] && cat "$CONF" || echo "sin reglas definidas";;
+  *) echo "uso: nexora-netwall {set|show}"; exit 2;;
+esac

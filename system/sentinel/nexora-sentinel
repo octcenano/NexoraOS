@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""nexora-sentinel: deteccion conductual (eBPF-ready) y orquestador del antivirus.
+
+Consume los eventos de las sondas eBPF (ebpf/probes/sentinel.bpf.c) cargadas por
+nexora-ebpf-loader (punto EBPF_HOOK). Sin sondas cargadas funciona en modo
+degradado muestreando /proc. Delega el antivirus en nexora-antivirus.
+"""
+import argparse
+import importlib.util
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ANTIVIRUS_PATH = Path(__file__).resolve().parent / "antivirus" / "nexora-antivirus"
+BPF_PIN = Path("/sys/fs/bpf/nexora/sentinel")
+SCORE_THRESHOLD = 60
+SUSPECT_NAMES = {"nc", "ncat", "socat", "xmrig", "cryptominer"}
+DOWNLOAD_DIRS = (str(Path.home() / "Descargas"), str(Path.home() / "Downloads"))
+
+
+def load_antivirus():
+    spec = importlib.util.spec_from_file_location("nexora_antivirus", ANTIVIRUS_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def bpf_available():
+    return BPF_PIN.exists()
+
+
+def bpf_events():
+    """EBPF_HOOK: referencia de produccion, consumidor aya sobre ring buffer."""
+    r = subprocess.run(["bpftool", "map", "dump", "pinned", str(BPF_PIN / "events")],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return
+    yield {"raw": r.stdout[:2000]}
+
+
+def proc_events():
+    for pid_dir in Path("/proc").iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            comm = (pid_dir / "comm").read_text().strip()
+            exe = os.path.realpath(pid_dir / "exe")
+        except OSError:
+            continue
+        yield {"pid": int(pid_dir.name), "comm": comm, "exe": exe}
+
+
+def score_event(ev):
+    score = 0
+    if ev["comm"] in SUSPECT_NAMES:
+        score += 50
+    if any(ev["exe"].startswith(d) for d in DOWNLOAD_DIRS):
+        score += 30
+    return score
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="nexora-sentinel")
+    parser.add_argument("--once", action="store_true",
+                        help="ejecuta un ciclo de observacion y termina (pruebas)")
+    args = parser.parse_args()
+
+    av = load_antivirus()
+    av.baseline_load()
+    mode = "eBPF" if bpf_available() else "muestreo /proc (degradado)"
+    print("nexora-sentinel: activo (modo %s)" % mode, flush=True)
+    seen = set()
+    while True:
+        if bpf_available():
+            for ev in bpf_events():
+                av.log_event("sentinel-ebpf", ev.get("raw", ""), "high", "Evento eBPF")
+        else:
+            for ev in proc_events():
+                key = (ev["pid"], ev["comm"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                score = score_event(ev)
+                if score >= SCORE_THRESHOLD:
+                    av.log_event("sentinel", ev["exe"], "high",
+                                 "Proceso sospechoso pid=%d comm=%s score=%d"
+                                 % (ev["pid"], ev["comm"], score))
+            if len(seen) > 100000:
+                seen.clear()
+        if args.once:
+            return 0
+        time.sleep(5)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

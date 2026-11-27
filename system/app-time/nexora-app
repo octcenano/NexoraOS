@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# nexora-app: maquina del tiempo por aplicacion (snapshots btrfs del perfil del usuario).
+set -euo pipefail
+BASE=/var/lib/nexora/app-time
+cmd=${1:-help}; app=${2:-}; shift 2 2>/dev/null || true
+case "$cmd" in
+  snapshot)
+    [[ -n $app ]] || { echo "uso: nexora-app snapshot <app>"; exit 2; }
+    dir="$HOME/.local/share/$app"
+    [[ -d $dir ]] || dir="$HOME/.config/$app"
+    [[ -d $dir ]] || { echo "perfil no encontrado: $app"; exit 1; }
+    ts=$(date +%Y%m%d-%H%M%S)
+    mkdir -p "$BASE/$app"
+    btrfs subvolume snapshot -r "$dir" "$BASE/$app/$ts" 2>/dev/null \
+      || cp -a "$dir" "$BASE/$app/$ts"
+    echo "snapshot $app -> $BASE/$app/$ts"
+    ;;
+  history)
+    [[ -n $app ]] || { echo "uso: nexora-app history <app>"; exit 2; }
+    ls -1 "$BASE/$app" 2>/dev/null || echo "sin snapshots para $app"
+    ;;
+  rollback)
+    [[ -n $app ]] || { echo "uso: nexora-app rollback <app> [ts]"; exit 2; }
+    last=$(ls -1 "$BASE/$app" 2>/dev/null | tail -1)
+    [[ -n $last ]] || { echo "sin snapshots para $app"; exit 1; }
+    ts=${1:-$last}
+    dir="$HOME/.local/share/$app"; [[ -d $dir ]] || dir="$HOME/.config/$app"
+    cp -a "$BASE/$app/$ts/." "$dir/"
+    echo "perfil de $app restaurado a $ts"
+    ;;
+  *) echo "uso: nexora-app {snapshot|history|rollback} <app>"; exit 2;;
+esac

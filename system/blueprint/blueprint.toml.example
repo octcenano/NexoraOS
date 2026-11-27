@@ -1,0 +1,13 @@
+# NexoraOS blueprint: estado declarativo del sistema.
+[packages.pacman]
+pacman = ["fish", "btop", "tor", "torsocks", "nyx", "zram-generator"]
+
+[packages.flatpak]
+flatpak = ["org.mozilla.firefox"]
+
+[services]
+enable  = ["nexora-sentinel.service", "nexora-ebpf.service", "nexora-ramopt.service"]
+disable = ["cups.service", "avahi-daemon.service"]
+
+[sysctl]
+vm.swappiness = 180

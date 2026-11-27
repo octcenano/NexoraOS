@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# nexora-core: actualizaciones atomicas A/B sobre btrfs (@root-a / @root-b).
+set -euo pipefail
+STATE_DIR=/var/lib/nexora/core
+STATE="$STATE_DIR/state.json"
+mkdir -p "$STATE_DIR"
+[[ -f $STATE ]] || echo '{"active":"a","previous":null,"boot_count":0}' > "$STATE"
+
+state_get() { jq -r ".$1 // empty" "$STATE"; }
+state_set() { local tmp; tmp=$(mktemp "$STATE_DIR/tmp.XXXXXX"); jq ".$1 = \$v" --arg v "$2" "$STATE" > "$tmp" && mv "$tmp" "$STATE"; }
+
+cmd=${1:-status}
+case "$cmd" in
+  status)
+    echo "ranura activa:  @root-$(state_get active)"
+    echo "ranura previa:  ${2:-$(state_get previous)}"
+    jq -r '"arranques en ranura actual: \(.boot_count)"' "$STATE"
+    ;;
+  update)
+    other=b; [[ $(state_get active) == b ]] && other=a
+    echo "[core] creando snapshot de @root-a a @root-$other"
+    btrfs subvolume snapshot /@root-$(state_get active) /@root-$other
+    mount --bind /@root-$other /mnt 2>/dev/null || true
+    if [[ -x /mnt/usr/bin/pacman ]]; then
+      arch-chroot /mnt pacman -Syu --noconfirm
+    else
+      pacman -Syu --noconfirm
+    fi
+    state_set previous "$(state_get active)"
+    state_set pending "$other"
+    echo "[core] actualizacion lista en @root-$other. Se activara en el proximo arranque."
+    ;;
+  activate)
+    other=$(state_get pending); [[ -n $other ]] || { echo "sin actualizacion pendiente"; exit 0; }
+    state_set active "$other"; state_set pending ""
+    state_set boot_count 0
+    echo "[core] @root-$other activada. Reinicie para arrancar en ella."
+    ;;
+  rollback)
+    prev=$(state_get previous); [[ -n $prev ]] || { echo "no hay ranura previa"; exit 1; }
+    state_set active "$prev"; state_set previous ""
+    echo "[core] rollback a @root-$prev. Reinicie."
+    ;;
+  *) echo "uso: nexora-core {status|update|activate|rollback}"; exit 2;;
+esac

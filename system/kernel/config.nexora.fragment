@@ -1,0 +1,46 @@
+# config.nexora.fragment: opciones obligatorias del nucleo NexoraOS.
+# eBPF: pila completa
+CONFIG_BPF=y
+CONFIG_BPF_SYSCALL=y
+CONFIG_BPF_JIT=y
+CONFIG_BPF_LSM=y
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_BPF_UNPRIV_DEFAULT_OFF=y
+
+# sched_ext (planificadores eBPF: scx_lavd, scx_bpfland)
+CONFIG_SCHED_CLASS_EXT=y
+CONFIG_BPF_SCHED=y
+
+# Gaming: NTSYNC (sincronizacion tipo Windows para Proton/Wine)
+CONFIG_NTSYNC=m
+
+# Preempcion dinamica
+CONFIG_PREEMPT_DYNAMIC=y
+
+# Memoria: zswap/zram con zstd
+CONFIG_ZSWAP=y
+CONFIG_ZSWAP_DEFAULT_PERC=y
+CONFIG_CRYPTO_ZSTD=y
+CONFIG_ZRAM=m
+
+# CPU: gobernadores modernos
+CONFIG_AMD_PSTATE=y
+CONFIG_X86_INTEL_PSTATE=y
+
+# GPU/DRM completo
+CONFIG_DRM=y
+
+# E/S: BFQ y mq-deadline
+CONFIG_IOSCHED_BFQ=y
+CONFIG_BFQ_GROUP_IOSCHED=y
+CONFIG_MQ_DEADLINE=y
+
+# NUMA y AIO amplio (meteorologia: mallas grandes)
+CONFIG_NUMA=y
+CONFIG_AIO=y
+CONFIG_IO_URING=y
+
+# Seguridad: YAMA, Landlock, auditoria
+CONFIG_SECURITY_YAMA=y
+CONFIG_SECURITY_LANDLOCK=y
+CONFIG_AUDIT=y

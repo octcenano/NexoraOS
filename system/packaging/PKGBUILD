@@ -1,0 +1,31 @@
+# Maintainer: NexoraOS
+pkgname=nexoraos-tools
+pkgver=0.3.0
+pkgrel=1
+pkgdesc='Herramientas del sistema NexoraOS (15 funciones + antivirus + eBPF + RAM + sigilo Tor)'
+arch=('any')
+license=('GPL3')
+depends=('python' 'jq' 'nftables' 'tor' 'torsocks' 'zram-generator' 'bubblewrap' 'podman' 'age')
+optdepends=('nyx: monitor de Tor' 'tpm2-tools: sellado de Vault' 'scx-schedulers: planificadores sched_ext')
+
+build() { :; }
+
+package() {
+  install -d "$pkgdir/usr/lib/nexora" "$pkgdir/usr/bin" \
+            "$pkgdir/usr/lib/systemd/system" "$pkgdir/usr/share/doc/nexoraos"
+  cp -a "$srcdir"/../sentinel "$srcdir"/../core "$srcdir"/../blueprint \
+        "$srcdir"/../app-time "$srcdir"/../cell "$srcdir"/../netwall \
+        "$srcdir"/../vault "$srcdir"/../persona "$srcdir"/../privacy \
+        "$srcdir"/../perf "$srcdir"/../doctor "$srcdir"/../guardian \
+        "$srcdir"/../lens "$srcdir"/../bridge "$srcdir"/../ramopt \
+        "$srcdir"/../tor "$srcdir"/../tuning "$srcdir"/../ebpf \
+        "$pkgdir/usr/lib/nexora/"
+  cp -a "$srcdir"/../units "$srcdir"/../docs "$pkgdir/usr/lib/nexora/"
+  cp -a "$srcdir"/../README.md "$srcdir"/../Makefile "$pkgdir/usr/share/doc/nexoraos/"
+  find "$pkgdir/usr/lib/nexora" -maxdepth 2 -type f -name 'nexora-*' -exec chmod +x {} +
+  install -m 644 "$srcdir"/../units/*.service "$srcdir"/../units/*.timer \
+                 "$srcdir"/../sentinel/units/*.service "$srcdir"/../core/units/*.service \
+                 "$srcdir"/../ramopt/units/*.service "$srcdir"/../ramopt/units/*.timer \
+                 "$srcdir"/../tor/units/*.service \
+                 "$pkgdir/usr/lib/systemd/system/"
+}

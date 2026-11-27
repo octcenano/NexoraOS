@@ -1,0 +1,45 @@
+# Maintainer: NexoraOS
+# Kernel linux-nexora: base 6.14 + parche BORE + fragmento de configuracion NexoraOS.
+pkgbase=linux-nexora
+_linuxver=6.14.0
+pkgver=6.14.0
+pkgrel=1
+pkgdesc='Nucleo NexoraOS: gaming, IA, oficina y meteorologia adaptado al hardware'
+arch=('x86_64')
+license=('GPL2')
+makedepends=('bc' 'cpio' 'git' 'kmod' 'libelf' 'pahole' 'xmlto' 'python-sphinx')
+source=("https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$_linuxver.tar.xz")
+# NOTA: ajustar _linuxver y sumas al construir; fetch-patches.sh descarga BORE.
+
+prepare() {
+  cd linux-$_linuxver
+  # Parche BORE (scheduler orientado a interactividad/gaming)
+  if [[ -f ../patches/bore.patch ]]; then
+    patch -Np1 -i ../patches/bore.patch
+  fi
+  # Fusion del fragmento de configuracion y verificacion dura de opciones criticas
+  scripts/kconfig/merge_config.sh -m .config ../config.nexora.fragment
+  make olddefconfig
+  for opt in CONFIG_NTSYNC CONFIG_SCHED_CLASS_EXT CONFIG_BPF_LSM CONFIG_DEBUG_INFO_BTF CONFIG_PREEMPT_DYNAMIC; do
+    grep -q "^$opt=[ym]" .config || { echo "FALLO: $opt ausente"; exit 1; }
+  done
+}
+
+build() {
+  cd linux-$_linuxver
+  make -j"$(nproc)" bzImage modules
+}
+
+package_linux-nexora() {
+  pkgdesc='Nucleo NexoraOS'
+  cd linux-$_linuxver
+  make INSTALL_MOD_PATH="$pkgdir/usr" modules_install
+  install -Dm644 arch/x86/boot/bzImage "$pkgdir/boot/vmlinuz-nexora"
+  make INSTALL_MOD_PATH="$pkgdir/usr" dtbs_install 2>/dev/null || true
+}
+
+package_linux-nexora-headers() {
+  pkgdesc='Cabeceras del nucleo NexoraOS'
+  cd linux-$_linuxver
+  make INSTALL_HDR_PATH="$pkgdir/usr" headers_install
+}

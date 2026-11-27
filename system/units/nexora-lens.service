@@ -1,0 +1,9 @@
+[Unit]
+Description=NexoraOS: indexacion semantica de Lens (solo en inactividad)
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=20%
+ExecStart=/usr/lib/nexora/lens/nexora-lens index

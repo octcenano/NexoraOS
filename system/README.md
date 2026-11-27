@@ -74,3 +74,5 @@ build.sh se ejecuta con bash porque push_files no conserva el bit de ejecucion (
 ## CI ISO 0.3.2
 
 El paso de ISO queda separado en dos fases (ensamblado y mkarchiso) para localizar fallos con precision.
+
+CI ISO 0.3.3: reejecucion con workflow corregido (bash archiso/build.sh, pasos separados).

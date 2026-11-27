@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # nexora-privacy: bloqueo per-app de microfono y camara.
 set -euo pipefail
-BASE=/var/lib/nexora/privacy
-mkdir -p "$BASE"
+BASE=${NEXORA_STATE_DIR:-/var/lib/nexora/privacy}
+if ! mkdir -p "$BASE" 2>/dev/null; then
+  BASE="$HOME/.local/state/nexora/privacy"
+  mkdir -p "$BASE"
+fi
 cmd=${1:-status}; device=${2:-mic}; app=${3:-}
 case "$cmd" in
   block)

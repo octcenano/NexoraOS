@@ -76,3 +76,5 @@ build.sh se ejecuta con bash porque push_files no conserva el bit de ejecucion (
 El paso de ISO queda separado en dos fases (ensamblado y mkarchiso) para localizar fallos con precision.
 
 CI ISO 0.3.3: reejecucion con workflow corregido (bash archiso/build.sh, pasos separados).
+
+CI 0.3.4: directorio de estado de Core y Privacy con respaldo en ~/.local/state/nexora (los runners no escriben en /var/lib).

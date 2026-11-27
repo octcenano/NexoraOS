@@ -1,0 +1,31 @@
+name: ISO NexoraOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['system/**']
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar archiso y utilidades
+        run: pacman -Syu --noconfirm archiso git rsync jq
+
+      - name: Ensamblar perfil archiso y generar ISO
+        working-directory: system
+        run: ./archiso/build.sh
+
+      - name: Verificar ISO generada
+        working-directory: system
+        run: test -f out/*.iso && ls -lh out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexoraos-iso
+          path: system/out/

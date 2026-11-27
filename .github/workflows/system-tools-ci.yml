@@ -1,0 +1,51 @@
+name: CI NexoraOS Tools
+
+on:
+  push:
+    branches: [main]
+    paths: ['system/**']
+  pull_request:
+    paths: ['system/**']
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: system
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: JSON de firmas valido
+        run: jq empty sentinel/antivirus/signatures/signatures.json
+
+      - name: Compilar modulos Python
+        run: python -m compileall -q sentinel blueprint doctor guardian lens
+
+      - name: Pruebas de humo de CLI (bash)
+        run: |
+          set -e
+          chmod +x core/nexora-core app-time/nexora-app netwall/nexora-netwall vault/nexora-vault persona/nexora-persona privacy/nexora-privacy perf/nexora-perf ramopt/nexora-ramopt tor/nexora-tor tor/nexora-stealth tuning/nexora-hwprofile sentinel/antivirus/nexora-antivirus
+          ./core/nexora-core status
+          ./netwall/nexora-netwall show
+          ./vault/nexora-vault list
+          ./privacy/nexora-privacy status
+          ./perf/nexora-perf status
+          ./ramopt/nexora-ramopt status
+          ./tor/nexora-tor status
+          ./tor/nexora-stealth status
+          ./tuning/nexora-hwprofile status
+          ./sentinel/antivirus/nexora-antivirus status
+
+      - name: Pruebas de humo de CLI (python, rutas de uso)
+        run: |
+          set -e
+          python3 blueprint/nexora-blueprint --help
+          python3 doctor/nexora-doctor || test $? -eq 2
+          python3 guardian/nexora-guardian || test $? -eq 2
+          python3 lens/nexora-lens || test $? -eq 2

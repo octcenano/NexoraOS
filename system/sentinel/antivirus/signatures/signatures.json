@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "updated": "2026-11-14",
+  "hashes": {
+    "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f": { "name": "EICAR-SHA256", "severity": "critical" }
+  },
+  "patterns": [
+    { "id": "AV-PS-001", "name": "Cradle de descarga y ejecucion PowerShell", "target": "text", "severity": "critical", "pattern": "(?i)(powershell|pwsh).{0,120}(DownloadString|DownloadFile|IEX|Invoke-Expression|FromBase64String)" },
+    { "id": "AV-SH-001", "name": "Descarga y ejecucion en shell", "target": "text", "severity": "high", "pattern": "(curl|wget)[^|]{0,200}\\|\\s*(ba|z|da)?sh" },
+    { "id": "AV-SH-002", "name": "Sesion interactiva inversa", "target": "text", "severity": "critical", "pattern": "(?i)(nc|ncat|netcat|socat).{0,80}(-e|--exec|/bin/(ba)?sh)" },
+    { "id": "AV-PY-001", "name": "Ejecucion dinamica ofuscada en Python", "target": "text", "severity": "high", "pattern": "(?i)(exec|eval)\\s*\\(\\s*(base64|codecs|zlib|marshal)" },
+    { "id": "AV-PRIV-001", "name": "Escalada: bit SUID aplicado por script", "target": "text", "severity": "critical", "pattern": "chmod\\s+(\\+s|[ug]\\+s|[24]?777|6777|4755)" },
+    { "id": "AV-PRIV-002", "name": "Escalada: setuid(0) embebido", "target": "text", "severity": "critical", "pattern": "setuid\\s*\\(\\s*0\\s*\\)" },
+    { "id": "AV-PRIV-003", "name": "Escalada: exploit de elevacion conocido", "target": "text", "severity": "critical", "pattern": "CVE-2021-4034|CVE-2023-0386|CVE-2016-5195|CVE-2022-0847|CVE-2024-1086" },
+    { "id": "AV-PRIV-004", "name": "Escalada: manipulacion de sudoers", "target": "text", "severity": "critical", "pattern": "/etc/sudoers|sudoers\\.d.{0,60}NOPASSWD" },
+    { "id": "AV-PRIV-005", "name": "Escalada: capacidad setuid peligrosa", "target": "text", "severity": "high", "pattern": "setcap\\s+cap_setuid|cap_setuid\\+ep" },
+    { "id": "AV-PRIV-006", "name": "Escalada: montaje de overlays privilegiados", "target": "text", "severity": "high", "pattern": "(?i)mount\\s+.*(overlay|tmpfs).{0,60}(sudo|root)" }
+  ],
+  "filenames": ["revshell", "meterpreter", "keylogger", "rootkit"]
+}

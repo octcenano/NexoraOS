@@ -23,11 +23,8 @@ if [[ $MODE == all || $MODE == assemble ]]; then
   sed -i 's/^iso_name=.*/iso_name="nexoraos"/' "$PROFILE/profiledef.sh"
   sed -i 's/^iso_publisher=.*/iso_publisher="NexoraOS <https:\/\/github.com\/octcenano\/nexoraos>"/' "$PROFILE/profiledef.sh"
 
-  echo "[3/4] paquetes y herramientas"
-  cat "$ROOT/archiso/packages.nexora" >> "$PROFILE/packages.x86_64"
-  sort -u -o "$PROFILE/packages.x86_64" "$PROFILE/packages.x86_64"
-  # Instalador propio: archinstall queda fuera de la ISO.
-  sed -i '/^archinstall$/d' "$PROFILE/packages.x86_64"
+  echo "[3/4] paquetes y herramientas (lista propia minima; archinstall excluido)"
+  cat "$ROOT/archiso/packages.nexora" > "$PROFILE/packages.x86_64"
   mkdir -p "$PROFILE/airootfs/usr/lib/nexora" "$PROFILE/airootfs/usr/local/bin"
   rsync -a --exclude '.git' --exclude 'archiso' --exclude '.github' \
         --exclude 'work' --exclude 'out' "$ROOT/" "$PROFILE/airootfs/usr/lib/nexora/tools/"

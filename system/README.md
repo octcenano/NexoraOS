@@ -57,13 +57,19 @@ archiso en un contenedor archlinux:base-devel. El artefacto nexoraos-iso queda
 disponible en la pagina del workflow.
 
 Construccion local: instale archiso y ejecute ./archiso/build.sh; el script
-ensambla el perfil a partir del releng de Arch, incorpora los paquetes de
-archiso/packages.nexora (archinstall queda excluido deliberadamente), copia las
-herramientas dentro del airootfs y genera la ISO en out/. La ISO incluye el
-instalador propio nexora-installer (sin archinstall): modo interactivo o --auto
-no interactivo, particionado GPT, ranuras A/B en btrfs con @root-b como
-instantanea identica desde el primer arranque, GRUB con entrada de respaldo,
-region es_ES y teclado es, y registro en /var/log/nexora-installer.log.
+ensambla el perfil a partir del releng de Arch pero SUSTITUYE su lista de
+paquetes por la propia y minima de archiso/packages.nexora (17 paquetes: solo
+arranque, red, instalacion y herramientas; archinstall y utilidades ajenas
+excluidas), copia las herramientas al airootfs y genera la ISO en out/.
+
+Instalador exclusivo: nexora-installer sustituye por completo a archinstall,
+que no esta presente en la ISO. Flujo guiado con menus numerados, valores por
+defecto, resumen y confirmacion: disco, perfil NexoraOS (game/ai/office/battery/
+meteo), nivel de sigilo Tor opcional (lite/balanced/advanced/isolated),
+hostname, zona horaria, usuario; esquema fijo GPT + btrfs A/B con @root-b como
+instantanea identica desde el primer arranque y GRUB con entrada de respaldo.
+Modo no interactivo para QEMU: --auto <disco> --yes [--profile P] [--stealth N].
+Al arrancar el live se ofrece ejecutar el instalador automaticamente.
 
 ## Estado y pendientes
 

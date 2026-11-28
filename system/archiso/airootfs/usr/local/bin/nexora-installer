@@ -1,79 +1,131 @@
 #!/usr/bin/env bash
-# nexora-installer: instalador propio de NexoraOS.
+# nexora-installer: instalador exclusivo de NexoraOS. Sustituye por completo a
+# archinstall (que no esta presente en la ISO).
 #
-# Diseno:
-#   - Modo interactivo guiado (por defecto) y modo no interactivo (--auto).
-#   - Deteccion de arranque UEFI/BIOS; particionado GPT:
-#       UEFI: ESP 512 MiB + raiz btrfs
-#       BIOS: particion BIOS boot 2 MiB + raiz btrfs
-#   - Raiz en btrfs con ranuras A/B: instala en @root-a y crea @root-b como
-#     instantanea identica, de modo que el rollback es valido desde el inicio.
-#   - Swap via zram (sin particion de intercambio).
-#   - GRUB con entrada de respaldo @root-b.
-#   - Configuracion regional espanola (es_ES.UTF-8, teclado es, Europa/Madrid).
-#   - Integracion de las herramientas NexoraOS, unidades systemd y servicios.
-#   - Registro completo en /var/log/nexora-installer.log.
+# Flujo guiado con menus, valores por defecto, resumen y confirmacion:
+#   1. Deteccion (arranque UEFI/BIOS, RAM, CPU).
+#   2. Disco y esquema fijo: GPT + btrfs con ranuras A/B (@root-a, @root-b, @home).
+#   3. Sistema base y herramientas NexoraOS.
+#   4. Configuracion: hostname, zona horaria, locale/teclado es_ES, usuario.
+#   5. Perfil NexoraOS (game/ai/office/battery/meteo) y nivel de sigilo opcional.
+#   6. GRUB con entrada de respaldo @root-b + instantanea identica desde el inicio.
+# Modo no interactivo para QEMU/despliegues: --auto <disco> [--yes] [opciones].
 set -euo pipefail
 
 LOG=/var/log/nexora-installer.log
-MODE=interactive
+MODE=interactive ASSUME_YES=0
 DISK="" HOSTNAME_NX=nexora TZ_NX=Europe/Madrid LOCALE_NX=es_ES.UTF-8 KEYMAP_NX=es
-USER_NAME="" USER_PASS=""
-BOOT="" PART_EFI="" PART_ROOT="" PART_BIOS="" PARTUUID_ROOT=""
+USER_NAME="nexora" USER_PASS=""
+PROFILE_NX=office STEALTH_NX=""
+BOOT="" PART_EFI="" PART_BIOS="" PART_ROOT="" PARTUUID_ROOT=""
+VALID_PROFILES="game ai office battery meteo"
+VALID_STEALTH="lite balanced advanced isolated"
 
 log() { echo "[instalador] $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+ask() { # ask <pregunta> <defecto> -> REPLY
+  local reply
+  read -rp "$1 [$2]: " reply || die "entrada no disponible"
+  REPLY=${reply:-$2}
+}
+
+menu() { # menu <titulo> <defecto> <opcion1> [opcion2...] -> REPLY
+  local title=$1 def=$2; shift 2
+  local i=1 o
+  echo "$title"
+  for o in "$@"; do echo "  $i) $o"; i=$((i+1)); done
+  while :; do
+    ask "$title" "$def"
+    if [[ $REPLY =~ ^[0-9]+$ ]] && (( REPLY >= 1 && REPLY <= $# )); then
+      REPLY=$(eval "echo \${$REPLY}")  # tras el shift, las opciones son $1..$n
+      return 0
+    fi
+    for o in "$@"; do
+      if [[ $REPLY == "$o" ]]; then return 0; fi
+    done
+    echo "opcion invalida"
+  done
+}
+
 usage() {
   cat <<USO
-uso: nexora-installer [--auto <disco>] [--hostname N] [--tz ZONA] [--user USUARIO]
-     Sin --auto, arranca el modo interactivo guiado.
+uso: nexora-installer [--auto <disco>] [--yes] [--hostname N] [--tz ZONA]
+                      [--user USUARIO] [--profile PERFIL] [--stealth NIVEL]
+Modo interactivo guiado por defecto. Perfiles: $VALID_PROFILES.
+Niveles de sigilo: $VALID_STEALTH.
 USO
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --auto) MODE=auto; DISK=${2:?falta disco}; shift 2;;
+    --yes) ASSUME_YES=1; shift;;
     --hostname) HOSTNAME_NX=$2; shift 2;;
     --tz) TZ_NX=$2; shift 2;;
     --user) USER_NAME=$2; shift 2;;
+    --profile) PROFILE_NX=$2; shift 2;;
+    --stealth) STEALTH_NX=$2; shift 2;;
     -h|--help) usage; exit 0;;
     *) die "opcion desconocida: $1";;
   esac
 done
 
-[[ $EUID == 0 ]] || die "ejecute como root (desde el live ISO)"
+[[ $EUID == 0 ]] || die "ejecute como root (desde el ISO live de NexoraOS)"
+command -v pacstrap >/dev/null || die "arch-install-scripts ausente: use el ISO live de NexoraOS"
+if ! printf '%s\n' $VALID_PROFILES | grep -qx "$PROFILE_NX"; then die "perfil invalido: $PROFILE_NX"; fi
+if [[ -n $STEALTH_NX ]] && ! printf '%s\n' $VALID_STEALTH | grep -qx "$STEALTH_NX"; then die "nivel de sigilo invalido: $STEALTH_NX"; fi
+
+mkdir -p /var/log
 exec > >(tee -a "$LOG") 2>&1
+log "NexoraOS - instalador exclusivo (sin archinstall)"
 
 # ---------------------------------------------------------- 1. Deteccion
-log "1/7 detectando hardware de arranque"
+log "1/6 detectando sistema"
 if [[ -d /sys/firmware/efi/efivars ]]; then BOOT=uefi; else BOOT=bios; fi
 log "modo de arranque: $BOOT"
-command -v pacstrap >/dev/null || die "ejecute desde el ISO live de NexoraOS (arch-install-scripts ausente)"
-ping -c1 -W3 geo.mirror.pkgbuild.com >/dev/null 2>&1 || log "aviso: sin respuesta de red temporal; pacman reintentara"
+mem_mb=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo)
+log "RAM del live: ${mem_mb} MB"
+ping -c1 -W3 geo.mirror.pkgbuild.com >/dev/null 2>&1 || log "aviso: red aun no respondiendo; pacman reintentara"
 
 # ---------------------------------------------------------- 2. Disco
 if [[ $MODE == auto ]]; then
   [[ -b "$DISK" ]] || die "disco invalido: $DISK"
 else
   echo "Discos disponibles:"
-  lsblk -dno NAME,SIZE,TYPE,MODEL | awk '$3=="disk"{printf "  /dev/%s  %s  %s\n", $1, $2, $4}'
-  read -rp "Disco de destino (ejemplo: /dev/vda): " DISK
+  lsblk -dno NAME,SIZE,TYPE,MODEL | awk '$3=="disk"{printf "  /dev/%-8s %s  %s\n", $1, $2, $4}'
+  ask "Disco de destino (ejemplo: /dev/vda)" "/dev/vda"; DISK=$REPLY
   [[ -b "$DISK" ]] || die "disco invalido: $DISK"
 fi
-echo "ATENCION: todos los datos de $DISK seran destruidos."
 if [[ $MODE == interactive ]]; then
-  read -rp "Escriba SI para continuar: " CONF
-  [[ "$CONF" == "SI" ]] || die "cancelado por el usuario"
-  read -rp "Nombre de usuario a crear [nexora]: " USER_NAME
-  read -rsp "Contrasena de ${USER_NAME:-nexora}: " USER_PASS; echo
+  menu "Perfil NexoraOS (aplicado tras instalar)" "$PROFILE_NX" $VALID_PROFILES; PROFILE_NX=$REPLY
+  menu "Nivel de sigilo Tor (vacio = sin sigilo)" "ninguno" ninguno $VALID_STEALTH
+  [[ $REPLY == ninguno ]] && STEALTH_NX="" || STEALTH_NX=$REPLY
+  ask "Hostname" "$HOSTNAME_NX"; HOSTNAME_NX=$REPLY
+  ask "Zona horaria" "$TZ_NX"; TZ_NX=$REPLY
+  ask "Usuario a crear" "$USER_NAME"; USER_NAME=$REPLY
+  read -rsp "Contrasena de $USER_NAME: " USER_PASS; echo
   read -rsp "Repita la contrasena: " USER_PASS2; echo
   [[ "$USER_PASS" == "$USER_PASS2" ]] || die "las contrasenas no coinciden"
 fi
-USER_NAME=${USER_NAME:-nexora}
+
+echo "-------------------- RESUMEN --------------------"
+echo "  disco:      $DISK (SE BORRARA POR COMPLETO)"
+echo "  arranque:   $BOOT (GPT, btrfs A/B: @root-a + @root-b + @home)"
+echo "  hostname:   $HOSTNAME_NX   zona: $TZ_NX"
+echo "  locale:     $LOCALE_NX / teclado $KEYMAP_NX"
+echo "  usuario:    $USER_NAME"
+echo "  perfil:     $PROFILE_NX   sigilo: ${STEALTH_NX:-off}"
+echo "-------------------------------------------------"
+if [[ $MODE == interactive ]]; then
+  read -rp "Escriba SI para instalar: " CONF
+  [[ "$CONF" == "SI" ]] || die "cancelado por el usuario"
+elif [[ $ASSUME_YES != 1 ]]; then
+  die "modo auto requiere --yes para confirmar el borrado de $DISK"
+fi
 
 # ---------------------------------------------------------- 3. Particionado
-log "3/7 particionando $DISK (GPT)"
+log "3/6 particionando $DISK (GPT)"
 sfdisk_out="label: gpt\n"
 if [[ $BOOT == uefi ]]; then
   sfdisk_out+="size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B\nsize=0, type=linux\n"
@@ -82,38 +134,34 @@ else
 fi
 echo -e "$sfdisk_out" | sfdisk "$DISK"
 partprobe "$DISK" 2>/dev/null || true
-
 suffix=""; [[ $DISK != /dev/nvme* && $DISK != /dev/mmcblk* ]] || suffix="p"
 PART_ROOT="${DISK}${suffix}2"
-if [[ $BOOT == uefi ]]; then PART_EFI="${DISK}${suffix}1"; else PART_BIOS="${DISK}${suffix}1"; fi
+[[ $BOOT == uefi ]] && PART_EFI="${DISK}${suffix}1" || PART_BIOS="${DISK}${suffix}1"
 [[ -b "$PART_ROOT" ]] || die "particion raiz no encontrada: $PART_ROOT"
-
 log "creando sistema de archivos"
 if [[ $BOOT == uefi ]]; then mkfs.fat -F32 "$PART_EFI"; fi
 mkfs.btrfs -f -L NEXORA "$PART_ROOT"
 PARTUUID_ROOT=$(blkid -s PARTUUID -o value "$PART_ROOT")
 
 # ---------------------------------------------------------- 4. Ranuras A/B
-log "4/7 preparando ranuras A/B en btrfs"
+log "4/6 preparando ranuras A/B en btrfs"
 mount "$PART_ROOT" /mnt
 btrfs subvolume create /mnt/@root-a
 btrfs subvolume create /mnt/@home
 umount /mnt
 mount -o subvol=@root-a,compress=zstd "$PART_ROOT" /mnt
-mkdir -p /mnt/home
+mkdir -p /mnt/home /mnt/boot /mnt/var/lib/nexora/perf
 mount -o subvol=@home,compress=zstd "$PART_ROOT" /mnt/home
-mkdir -p /mnt/boot
 if [[ $BOOT == uefi ]]; then mount "$PART_EFI" /mnt/boot; fi
 
 # ---------------------------------------------------------- 5. Sistema base
-log "5/7 instalando sistema base"
+log "5/6 instalando sistema base y herramientas NexoraOS"
 PKGS="base linux linux-firmware grub networkmanager btrfs-progs \
       jq python nftables tor torsocks zram-generator age bubblewrap git"
 if [[ $BOOT == uefi ]]; then PKGS+=" efibootmgr"; fi
 pacstrap -K /mnt $PKGS
 genfstab -U /mnt >> /mnt/etc/fstab
 
-log "instalando herramientas NexoraOS"
 mkdir -p /mnt/usr/lib/nexora /mnt/usr/local/bin
 cp -a /usr/lib/nexora/tools /mnt/usr/lib/nexora/
 find /mnt/usr/lib/nexora/tools -maxdepth 3 -type f -name 'nexora-*' -exec chmod +x {} +
@@ -126,13 +174,11 @@ cp /mnt/usr/lib/nexora/tools/ramopt/units/*.service \
    /mnt/usr/lib/nexora/tools/ramopt/units/*.timer /mnt/etc/systemd/system/
 cp /mnt/usr/lib/nexora/tools/tor/units/*.service /mnt/etc/systemd/system/
 cp /mnt/usr/lib/nexora/tools/units/*.service /mnt/usr/lib/nexora/tools/units/*.timer /mnt/etc/systemd/system/
-
-log "estado inicial de Core A/B"
 mkdir -p /mnt/var/lib/nexora/core
 echo '{"active":"a","previous":"a","boot_count":0}' > /mnt/var/lib/nexora/core/state.json
 
 # ---------------------------------------------------------- 6. Configuracion
-log "6/7 configurando el sistema"
+log "6/6 configurando el sistema"
 arch-chroot /mnt bash -e <<CHROOT
 echo "$HOSTNAME_NX" > /etc/hostname
 printf '127.0.0.1\tlocalhost\n::1\t\tlocalhost\n127.0.1.1\t$HOSTNAME_NX\n' > /etc/hosts
@@ -144,18 +190,27 @@ ln -sf "/usr/share/zoneinfo/$TZ_NX" /etc/localtime
 systemctl enable NetworkManager systemd-zram-setup@zram0.service nexora-ramopt.service
 CHROOT
 
-if [[ -n $USER_NAME ]]; then
-  arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USER_NAME"
-  if [[ -n $USER_PASS ]]; then
-    echo "$USER_NAME:$USER_PASS" | arch-chroot /mnt chpasswd
-  else
-    arch-chroot /mnt bash -c "passwd $USER_NAME"
-  fi
-  echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
-  chmod 440 /mnt/etc/sudoers.d/wheel
+arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USER_NAME"
+if [[ -n $USER_PASS ]]; then
+  echo "$USER_NAME:$USER_PASS" | arch-chroot /mnt chpasswd
+else
+  arch-chroot /mnt bash -c "passwd $USER_NAME"
+fi
+echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/wheel
+chmod 440 /mnt/etc/sudoers.d/wheel
+
+log "aplicando perfil NexoraOS: $PROFILE_NX"
+arch-chroot /mnt /usr/local/bin/nexora-perf "$PROFILE_NX"
+
+if [[ -n $STEALTH_NX ]]; then
+  log "configurando sigilo Tor: $STEALTH_NX"
+  install -d /mnt/etc/tor /mnt/var/lib/nexora/stealth
+  install -m 644 /usr/lib/nexora/tools/tor/torrc.nexora /mnt/etc/tor/torrc
+  echo "$STEALTH_NX" > /mnt/var/lib/nexora/stealth/level
+  arch-chroot /mnt systemctl enable tor.service
 fi
 
-log "creando instantanea identica en @root-b (rollback valido desde el inicio)"
+log "instantanea identica en @root-b (rollback valido desde el inicio)"
 btrfs subvolume snapshot /mnt/@root-a /mnt/@root-b
 
 log "instalando GRUB con entrada de respaldo A/B"
@@ -181,9 +236,9 @@ fi
 grub-mkconfig -o /boot/grub/grub.cfg
 GRUBCHROOT
 
-# ---------------------------------------------------------- 7. Cierre
-log "7/7 cierre"
 sync
-umount -R /mnt 2>/dev/null || umount /mnt/boot /mnt/home /mnt
-log "Instalacion de NexoraOS completada en $DISK (ranura activa @root-a, respaldo @root-b)."
-log "Registre la incidencia si algo fallo: $LOG. Puede reiniciar ahora."
+umount -R /mnt 2>/dev/null || { umount /mnt/boot 2>/dev/null || true; umount /mnt/home; umount /mnt; }
+log "Instalacion de NexoraOS completada en $DISK."
+log "Perfil $PROFILE_NX y sigilo ${STEALTH_NX:-off} quedan aplicados. Registro: $LOG"
+log "Puede reiniciar ahora."
+

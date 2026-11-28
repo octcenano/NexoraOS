@@ -1,8 +1,20 @@
+# Lista de paquetes PROPIA y MINIMA de la ISO NexoraOS (sustituye por completo
+# a la del releng). Solo lo necesario para arrancar, tener red, instalar y
+# ejecutar las herramientas: sin archinstall ni utilidades ajenas.
+base
+linux
+linux-firmware
+amd-ucode
+intel-ucode
+mkinitcpio
+mkinitcpio-archiso
+syslinux
+mtools
+squashfs-tools
+arch-install-scripts
+networkmanager
+btrfs-progs
+dosfstools
 jq
 python
-nftables
-tor
-torsocks
-zram-generator
-age
-bubblewrap
+zsh

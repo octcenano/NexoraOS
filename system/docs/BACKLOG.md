@@ -103,10 +103,13 @@ y se gestiona por fases (seccion 16).
 
 ## 13. Distribucion e instalador
 - [x] ISO reproducible construida por CI (archiso + GitHub Actions, job iso)
-- [x] Instalador propio nexora-installer (sin archinstall): modo interactivo y
-      --auto no interactivo, GPT (ESP o BIOS boot), A/B en btrfs con @root-b
-      como instantanea identica desde el inicio, GRUB con entrada de respaldo
-      @root-b, region es_ES y teclado es, registro en /var/log
+- [x] Instalador exclusivo nexora-installer (sustituye a archinstall, que no
+      esta en la ISO): menus guiados, resumen y confirmacion, GPT (ESP o BIOS
+      boot), A/B en btrfs con @root-b identica desde el inicio, GRUB con
+      respaldo, perfiles NexoraOS y sigilo Tor al terminar, es_ES + teclado es,
+      --auto --yes para QEMU, registro en /var/log
+- [x] ISO ligera: lista de paquetes propia y minima (17) en lugar del releng
+      completo (~130 paquetes)
 - Parcial: imagen de recuperacion (recovery/), PKGBUILD del kernel
 - Pendiente: arranque validado en QEMU y hardware fisico, instalador grafico,
   systemd-boot, recuperacion ante instalaciones fallidas, primer arranque,

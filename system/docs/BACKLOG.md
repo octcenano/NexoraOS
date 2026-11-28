@@ -36,6 +36,8 @@ y se gestiona por fases (seccion 16).
 - [x] Integracion con eBPF
 - [x] Cuarentena
 - [x] Historial de amenazas (events.jsonl)
+- [x] Consola de eventos, auditoria y cuarentena con respuestas autorizadas (nexora-av-console)
+- [x] Integracion con NetWall (contain: STOP + veto de red)
 - [x] Watchdogs especializados (nexora-watchdog + WatchdogSec de nexora-nke)
 - [ ] Integracion con Guardian
 - [ ] Recuperacion automatica ante incidentes
@@ -80,9 +82,11 @@ y se gestiona por fases (seccion 16).
 - Todo pendiente: reproductor propio, biblioteca, listas, controles globales.
 
 ## 9. Nexora Desktop
-- Todo pendiente: validacion GTK3, refinamiento XFCE, polkit, centros de
+- Parcial: Nexora Session (Aura, audio y sonidos, notificaciones, integracion
+  con XFCE, preferencias, huella audiovisual con chime propio).
+- Todo lo demas pendiente: validacion GTK3, refinamiento XFCE, polkit, centros de
   actualizaciones y aplicaciones, integraciones visuales, monitorizacion,
-  notificaciones, accesibilidad, revision UX/UI, recuperacion de sesion.
+  notificaciones inteligentes, accesibilidad, revision UX/UI, recuperacion de sesion.
 
 ## 10. Red y conectividad
 - [x] NetWall (parcial: cgroups + nftables + mapa eBPF)
@@ -99,9 +103,9 @@ y se gestiona por fases (seccion 16).
 - Parcial: nexora-doctor (5 comprobaciones + --auto), timers nexora-doctor y
   nexora-lens, limites MemoryMax en daemons, nexora-watchdog (supervision y
   reinicio de nke, sentinel, tor y ramopt), nexora-nke como daemon residente
-  con WatchdogSec y recuperacion automatica.
-- Pendiente: validacion en hardware real, mantenimiento programado completo,
-  prevencion de bucles de reinicio, comprobacion de servicios huerfanos.
+  con WatchdogSec y recuperacion automatica, nexora-supervisor (Sentinel
+  Supervisor: bloqueos, huerfanos, recuperacion controlada, mantenimiento).
+- Pendiente: validacion en hardware real, prevencion de bucles de reinicio.
 
 ## 13. Distribucion e instalador
 - [x] ISO reproducible construida por CI (archiso + GitHub Actions, job iso)

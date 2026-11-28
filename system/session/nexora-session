@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# nexora-session: experiencia de usuario NexoraOS (P1/P3).
+#   Aura (temas y acento), audio y sonidos, notificaciones, integracion con el
+#   escritorio, preferencias de usuario y huella audiovisual propia
+#   (chime de arranque generado por el propio sistema).
+# Comandos: aura set|show | audio | notify | dnd | desktop | fingerprint | prefs | status
+set -euo pipefail
+HOME=${HOME:-/root}
+CFG="$HOME/.config/nexora/session"
+DATA="$HOME/.local/share/nexora/session"
+mkdir -p "$CFG" "$DATA/fingerprint"
+PREFS="$CFG/prefs.json"
+[[ -f $PREFS ]] || echo '{}' > "$PREFS"
+
+pget() { jq -r --arg k "$1" '.[$k] // ""' "$PREFS"; }
+pset() { local t="$CFG/tmp.$$"; jq --arg k "$1" --arg v "$2" '.[$k] = $v' "$PREFS" > "$t" && mv "$t" "$PREFS"; }
+
+xfset() { command -v xfconf-query >/dev/null 2>&1 && xfconf-query -c xsettings -p "$1" -s "$2" 2>/dev/null || true; }
+
+# ---------------------------------------------------------- Aura
+aura() {
+  case "${1:-show}" in
+    set)
+      tema=${2:?tema: oscuro|claro|alto-contraste}; acento=${3:-naranja}
+      case "$tema" in
+        oscuro) gtk="Nexora-dark";;
+        claro) gtk="Nexora-light";;
+        alto-contraste) gtk="Nexora-contrast";;
+        *) echo "tema invalido"; exit 2;;
+      esac
+      pset aura_tema "$tema"; pset aura_acento "$acento"
+      xfset /Net/ThemeName "$gtk"
+      echo "[session] aura: tema $tema, acento $acento"
+      ;;
+    show)
+      echo "aura: tema $(pget aura_tema), acento $(pget aura_acento)"
+      ;;
+    *) echo "uso: nexora-session aura {set|show}"; exit 2;;
+  esac
+}
+
+# ---------------------------------------------------------- Audio
+audio() {
+  case "${1:-status}" in
+    on)
+      command -v wpctl >/dev/null 2>&1 && wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 || true
+      gsettings set org.gnome.desktop.sound event-sounds true 2>/dev/null || true
+      pset audio_eventos on; echo "[session] audio activado"
+      ;;
+    off)
+      command -v wpctl >/dev/null 2>&1 && wpctl set-mute @DEFAULT_AUDIO_SINK@ 1 || true
+      gsettings set org.gnome.desktop.sound event-sounds false 2>/dev/null || true
+      pset audio_eventos off; echo "[session] audio silenciado"
+      ;;
+    volume)
+      command -v wpctl >/dev/null 2>&1 && wpctl set-volume @DEFAULT_AUDIO_SINK@ "${2:?porcentaje}%" || true
+      echo "[session] volumen: $2%"
+      ;;
+    status) echo "eventos de audio: $(pget audio_eventos)";;
+    *) echo "uso: nexora-session audio {on|off|volume <pct>|status}"; exit 2;;
+  esac
+}
+
+# ---------------------------------------------------------- Notificaciones
+notify() {
+  t=${1:?uso: nexora-session notify <titulo> [texto]}; body=${2:-}
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send "$t" "$body" || true
+  else
+    echo "[notificacion] $t: $body"
+  fi
+}
+
+dnd() {
+  case "${1:-status}" in
+    on) pset dnd on; echo "[session] no molestar activado";;
+    off) pset dnd off; echo "[session] no molestar desactivado";;
+    status) echo "no molestar: $(pget dnd)";;
+  esac
+}
+
+# ---------------------------------------------------------- Escritorio
+desktop() {
+  case "${1:-status}" in
+    status)
+      echo "sesion: ${XDG_CURRENT_DESKTOP:-desconocida}"
+      if command -v startxfce4 >/dev/null 2>&1; then echo "XFCE disponible (startxfce4)"; fi
+      ;;
+    start)
+      if command -v startxfce4 >/dev/null 2>&1; then exec startxfce4; else echo "XFCE no instalado"; fi
+      ;;
+    *) echo "uso: nexora-session desktop {status|start}"; exit 2;;
+  esac
+}
+
+# ---------------------------------------------------------- Huella audiovisual
+fingerprint() {
+  case "${1:-show}" in
+    generate)
+      # chime propio de NexoraOS: PCM 8-bit mono 8000 Hz, acorde ascendente.
+      # Metodo POSIX: awk emite octales por linea, sed antepone la barra
+      # invertida y printf los convierte a bytes crudos.
+      awk 'BEGIN{
+        sr=8000;
+        split("523 659 784", f); split("960 960 1280", ns);
+        for(i=1;i<=3;i++){
+          for(j=0;j<ns[i];j++){
+            s=sin(6.28318*f[i]*j/sr)*0.55*(1.0-j/ns[i]*0.35);
+            printf "%03o\n", 128+int(s*110);
+          }
+        }
+      }' > "$DATA/fingerprint/chime.oct"
+      sed 's/^/\\/' "$DATA/fingerprint/chime.oct" | tr -d '\n' > "$DATA/fingerprint/chime.esc"
+      printf "$(cat "$DATA/fingerprint/chime.esc")" > "$DATA/fingerprint/chime.pcm"
+      rm -f "$DATA/fingerprint/chime.oct" "$DATA/fingerprint/chime.esc"
+      if [[ $(wc -c < "$DATA/fingerprint/chime.pcm") != 3200 ]]; then
+        echo "ERROR: PCM de tamano inesperado ($(wc -c < "$DATA/fingerprint/chime.pcm") != 3200)" >&2
+        exit 1
+      fi
+      { printf 'RIFF'; printf '\xa4\x0c\x00\x00'; printf 'WAVE'
+        printf 'fmt '; printf '\x10\x00\x00\x00'; printf '\x01\x00'; printf '\x01\x00'
+        printf '\x40\x1f\x00\x00'; printf '\x40\x1f\x00\x00'; printf '\x01\x00'; printf '\x08\x00'
+        printf 'data'; printf '\xa4\x0c\x00\x00'
+        cat "$DATA/fingerprint/chime.pcm"
+      } > "$DATA/fingerprint/chime.wav"
+      rm -f "$DATA/fingerprint/chime.pcm"
+      pset huella_chime "$DATA/fingerprint/chime.wav"
+      echo "[session] huella audiovisual: chime generado en $DATA/fingerprint/chime.wav"
+      ;;
+    apply)
+      chime=$(pget huella_chime)
+      [[ -f $chime ]] || { echo "genere primero la huella: nexora-session fingerprint generate"; exit 1; }
+      pset huella_activa on
+      echo "[session] huella aplicada: arranque con chime propio + tema $(pget aura_tema)"
+      ;;
+    show)
+      echo "huella audiovisual"
+      echo "  chime: $(pget huella_chime)"
+      echo "  activa: $(pget huella_activa)"
+      echo "  tema: $(pget aura_tema)  acento: $(pget aura_acento)"
+      ;;
+    play)
+      chime=$(pget huella_chime)
+      command -v paplay >/dev/null 2>&1 && paplay "$chime" || echo "paplay no disponible"
+      ;;
+    *) echo "uso: nexora-session fingerprint {generate|apply|show|play}"; exit 2;;
+  esac
+}
+
+# ---------------------------------------------------------- Preferencias
+prefs() {
+  case "${1:-list}" in
+    set) pset "${2:?clave}" "${3:?valor}"; echo "[session] $2 = $3";;
+    get) pget "${2:?clave}";;
+    list) jq -r 'to_entries[] | "\(.key) = \(.value)"' "$PREFS";;
+    *) echo "uso: nexora-session prefs {get|set|list}"; exit 2;;
+  esac
+}
+
+status() {
+  echo "Nexora Session"
+  echo "  $(aura show)"
+  echo "  $(audio status)"
+  echo "  $(dnd status)"
+  echo "  $(desktop status)"
+  echo "  $(fingerprint show | tail -3 | tr '\n' ' ')"
+  return 0
+}
+
+case "${1:-status}" in
+  aura) shift; aura "$@";;
+  audio) shift; audio "$@";;
+  notify) shift; notify "$@";;
+  dnd) shift; dnd "$@";;
+  desktop) shift; desktop "$@";;
+  fingerprint) shift; fingerprint "$@";;
+  prefs) shift; prefs "$@";;
+  status) status;;
+  *) echo "uso: nexora-session {aura|audio|notify|dnd|desktop|fingerprint|prefs|status}"; exit 2;;
+esac

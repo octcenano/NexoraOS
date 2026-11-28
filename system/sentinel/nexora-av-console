@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# nexora-av-console: consola de gestion de Sentinel AV (P1/P2).
+#   - Eventos sospechosos y auditoria completa de acciones.
+#   - Cuarentena con respuestas autorizadas (restaurar/purgar exigen
+#     confirmacion por frase exacta y quedan registradas como autorizadas).
+#   - Integracion con NetWall: contencion de un proceso (cuarentena + veto de red).
+# Comandos: events | audit | quarantine list|restore|purge | contain | status
+set -euo pipefail
+SELF=$(readlink -f "$0"); LIBDIR=$(dirname "$SELF")
+HOME=${HOME:-/root}
+AV_DIR=${NEXORA_STATE_DIR:-/var/lib/nexora/antivirus}
+if [[ ! -d $AV_DIR ]]; then
+  AV_DIR="$HOME/.local/state/nexora/antivirus"
+  mkdir -p "$AV_DIR"
+fi
+EVENTS="$AV_DIR/events.jsonl"
+QUAR="$AV_DIR/quarantine"
+AUDIT="$AV_DIR/audit.jsonl"
+mkdir -p "$QUAR"
+netwall_cli() {
+  for c in "$LIBDIR/netwall/nexora-netwall" /usr/lib/nexora/netwall/nexora-netwall; do
+    if [[ -x $c ]]; then echo "$c"; return 0; fi
+  done
+  echo ""
+}
+
+authorize() { # authorize <accion> <frase>
+  read -rp "Respuesta autorizada: escriba $2 para $1: " r
+  if [[ "$r" == "$2" ]]; then
+    echo "{\"ts\":$(date +%s),\"authorized\":true,\"action\":\"$1\",\"user\":\"$(id -un 2>/dev/null || echo '?')\"}" >> "$AUDIT"
+    return 0
+  fi
+  echo "{\"ts\":$(date +%s),\"authorized\":false,\"action\":\"$1\"}" >> "$AUDIT"
+  echo "autorizacion denegada" >&2
+  return 1
+}
+
+case "${1:-status}" in
+  events)
+    n=${3:-20}; sev=${2:-}
+    if [[ -f $EVENTS ]]; then
+      if [[ -n $sev ]]; then
+        jq -c --arg s "$sev" 'select(.severity == $s)' "$EVENTS" | tail -n "$n"
+      else
+        tail -n "$n" "$EVENTS"
+      fi
+    else echo "sin eventos registrados"; fi
+    ;;
+  audit)
+    if [[ -f $AUDIT ]]; then cat "$AUDIT"; else echo "auditoria vacia"; fi
+    ;;
+  quarantine)
+    sub=${2:-list}
+    case "$sub" in
+      list)
+        if ls "$QUAR" 2>/dev/null | grep -q .; then ls -l "$QUAR"; else echo "cuarentena vacia"; fi
+        ;;
+      restore)
+        f=${3:?uso: nexora-av-console quarantine restore <fichero>}
+        [[ -f "$QUAR/$f" ]] || { echo "no existe en cuarentena: $f"; exit 1; }
+        authorize "restaurar $f" RESTAURAR
+        chmod 644 "$QUAR/$f"
+        mv "$QUAR/$f" "${f}"
+        echo "restaurado: $f"
+        ;;
+      purge)
+        authorize "purgar cuarentena ($QUAR)" PURGAR
+        find "$QUAR" -type f -exec shred -u {} + 2>/dev/null || rm -f "$QUAR"/*
+        echo "cuarentena purgada"
+        ;;
+      *) echo "uso: nexora-av-console quarantine {list|restore|purge}"; exit 2;;
+    esac
+    ;;
+  contain)
+    app=${2:?uso: nexora-av-console contain <proceso>}
+    pids=$(pgrep -f "$app" 2>/dev/null || true)
+    if [[ -n $pids ]]; then
+      for p in $pids; do kill -STOP "$p" 2>/dev/null || true; done
+      echo "[av-console] $app detenido temporalmente (STOP): $pids"
+    else
+      echo "[av-console] sin procesos vivos de $app"
+    fi
+    nw=$(netwall_cli)
+    if [[ -n $nw ]]; then
+      "$nw" set "$app" deny >/dev/null 2>&1 || true
+      echo "[av-console] NetWall: salida denegada para $app"
+    fi
+    echo "{\"ts\":$(date +%s),\"action\":\"contain\",\"target\":\"$app\"}" >> "$AUDIT"
+    ;;
+  status)
+    total=0; crit=0
+    if [[ -f $EVENTS ]]; then
+      total=$(wc -l < "$EVENTS")
+      crit=$(jq -s '[.[] | select(.severity == "critical")] | length' "$EVENTS" 2>/dev/null || echo 0)
+    fi
+    qsize=$(du -sh "$QUAR" 2>/dev/null | cut -f1) || qsize=0
+    echo "Sentinel AV - consola"
+    echo "  eventos registrados: $total (criticos: $crit)"
+    echo "  cuarentena: $QUAR ($qsize)"
+    echo "  acciones autorizadas: $( [[ -f $AUDIT ]] && wc -l < "$AUDIT" || echo 0 )"
+    ;;
+  *) echo "uso: nexora-av-console {events|audit|quarantine|contain|status}"; exit 2;;
+esac

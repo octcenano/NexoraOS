@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# nexora-supervisor: Sentinel Supervisor - salud del sistema (P1).
+#   Watchdogs centrales, comprobaciones de servicios, deteccion de bloqueos y
+#   procesos huerfanos, recuperacion controlada por etapas, diagnostico y
+#   mantenimiento.
+# Comandos: once | status | locks | orphans | recover | maintain
+set -euo pipefail
+SELF=$(readlink -f "$0"); LIBDIR=$(dirname "$SELF")
+STATE_DIR=${NEXORA_STATE_DIR:-/var/lib/nexora/supervisor}
+if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
+  STATE_DIR="$HOME/.local/state/nexora/supervisor"
+  mkdir -p "$STATE_DIR"
+fi
+STATE="$STATE_DIR/supervisor-state.json"
+[[ -f $STATE ]] || echo '{"runs":0,"locks":0,"orphans":0,"recoveries":0}' > "$STATE"
+js() { local t="$STATE_DIR/tmp.$$"; jq "$1" "$STATE" > "$t" && mv "$t" "$STATE"; }
+jg() { jq -r ".$1 // 0" "$STATE"; }
+
+cli() { # cli <componente> -> ruta ejecutable o vacio
+  for c in "$LIBDIR/../$1" "/usr/lib/nexora/$1"; do
+    if [[ -x $c ]]; then echo "$c"; return 0; fi
+  done
+  echo ""
+}
+
+locks() {
+  local found=0
+  # bloqueo de pacman con antiguedad y sin pacman vivo
+  if [[ -e /var/lib/pacman/db.lck ]]; then
+    local age=0
+    age=$(( $(date +%s) - $(stat -c %Y /var/lib/pacman/db.lck 2>/dev/null || date +%s) ))
+    if [[ $age -gt 3600 ]] && ! pgrep -x pacman >/dev/null 2>&1; then
+      echo "bloqueo obsoleto de pacman: db.lck (${age}s)"; found=1
+    else
+      echo "bloqueo de pacman activo: pacman esta trabajando"
+    fi
+  fi
+  # unidades en estado de fallo de arranque (start-limit)
+  if command -v systemctl >/dev/null 2>&1; then
+    local failed
+    failed=$(systemctl --failed --no-legend 2>/dev/null | awk '{print $1}') || failed=""
+    for u in $failed; do echo "unidad en fallo: $u"; found=1; done
+  fi
+  return 0
+}
+
+orphans() {
+  command -v ps >/dev/null 2>&1 || { echo "ps no disponible; omitido"; return 0; }
+  ps -eo pid=,ppid=,comm= | awk '$2==1 && $3 !~ /^(systemd|init|dbus-daemon|agetty|login|sshd|cron|atd|udevd|systemd-journal|systemd-udevd|systemd-logind|snapd|polkitd|NetworkManager)$/{printf "posible huerfano: pid %s (%s)\n", $1, $3}'
+  return 0
+}
+
+recover() {
+  echo "[supervisor] recuperacion controlada por etapas"
+  local wd doctor n=0
+  wd=$(cli watchdogs/nexora-watchdog)
+  if [[ -n $wd ]]; then "$wd" once || true; n=$((n+1)); fi
+  doctor=$(cli doctor/nexora-doctor)
+  if [[ -n $doctor ]]; then "$doctor" --auto || true; n=$((n+1)); fi
+  js ".recoveries = $(( $(jg recoveries) + 1 ))"
+  echo "[supervisor] etapas ejecutadas: $n (si persiste, valorar rollback de Core: nexora-core rollback)"
+  return 0
+}
+
+maintain() {
+  echo "[supervisor] mantenimiento"
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl --vacuum-size=100M 2>/dev/null | tail -1 || true
+  fi
+  # resumen de timers activos
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl list-timers --no-pager 2>/dev/null | grep nexora || echo "  sin timers nexora activos"
+  fi
+  return 0
+}
+
+once() {
+  js ".runs = $(( $(jg runs) + 1 ))"
+  local out_l out_o bad=0
+  out_l=$(locks)
+  out_o=$(orphans)
+  echo "$out_l"; echo "$out_o"
+  echo "$out_l" | grep -q bloqueo && bad=1 || true
+  echo "$out_o" | grep -q huerfano && bad=1 || true
+  if [[ $bad == 1 ]]; then
+    js ".locks = $(( $(jg locks) + $(echo "$out_l" | grep -c bloqueo || true) ))"
+    js ".orphans = $(( $(jg orphans) + $(echo "$out_o" | grep -c huerfano || true) ))"
+    echo "[supervisor] incidencias detectadas: ejecute 'nexora-supervisor recover'"
+  else
+    echo "[supervisor] sin incidencias"
+  fi
+  return 0
+}
+
+status() {
+  echo "Sentinel Supervisor - salud"
+  echo "  ciclos: $(jg runs)  bloqueos vistos: $(jg locks)  huerfanos vistos: $(jg orphans)  recuperaciones: $(jg recoveries)"
+  local wd
+  wd=$(cli watchdogs/nexora-watchdog)
+  if [[ -n $wd ]]; then "$wd" status || true; fi
+  return 0
+}
+
+case "${1:-status}" in
+  once) once;;
+  status) status;;
+  locks) locks;;
+  orphans) orphans;;
+  recover) recover;;
+  maintain) maintain;;
+  *) echo "uso: nexora-supervisor {once|status|locks|orphans|recover|maintain}"; exit 2;;
+esac

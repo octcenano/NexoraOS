@@ -27,6 +27,9 @@ Herramientas del sistema NexoraOS, distribucion Linux propia basada en Arch.
 | Tuning por hardware | nexora-hwprofile | tuning/ |
 | NKE (nucleo adaptativo, P1) | nexora-nke | nke/ |
 | Watchdogs (P1) | nexora-watchdog | watchdogs/ |
+| Consola Sentinel AV (P1) | nexora-av-console | sentinel/ |
+| Supervisor de salud (P1) | nexora-supervisor | watchdogs/ |
+| Nexora Session (P1) | nexora-session | session/ |
 | RAM < 500 MB | nexora-ramopt | ramopt/ |
 | Sigilo Tor | nexora-tor + nexora-stealth | tor/ |
 
@@ -83,6 +86,23 @@ hacking, stealth) y revierte cualquier cambio que empeore el rendimiento
 reinicia. Ambos operan con presupuestos de memoria (MemoryMax 64M y 32M).
 Comandos: nexora-nke {once|run|status|mode <m>|decide|explain};
 nexora-watchdog {once|run|status}.
+
+## Consola Sentinel, Supervisor de salud y Nexora Session (P1)
+
+- nexora-av-console: eventos sospechosos filtrables, auditoria completa de
+  acciones, cuarentena con respuestas autorizadas (restaurar exige RESTAURAR y
+  purgar exige PURGAR; ambas quedan registradas con usuario y sello de
+  autorizacion) e integracion con NetWall: contain <proceso> detiene el
+  proceso y le deniega la salida de red.
+- nexora-supervisor (Sentinel Supervisor): watchdogs centrales, comprobacion
+  de servicios, deteccion de bloqueos obsoletos (db.lck mayor de una hora sin
+  pacman vivo, unidades en fallo) y procesos huerfanos, recuperacion
+  controlada por etapas (watchdog, doctor --auto, valoracion de rollback),
+  diagnostico y mantenimiento (vacuum del journal, timers).
+- nexora-session: Aura (temas oscuro/claro/alto-contraste con acento), audio y
+  sonidos de eventos, notificaciones y no molestar, integracion con XFCE,
+  preferencias de usuario persistidas en JSON y huella audiovisual propia con
+  chime de arranque generado por el sistema (WAV 8 kHz generado internamente).
 
 ## Estado y pendientes
 

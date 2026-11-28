@@ -80,3 +80,5 @@ CI ISO 0.3.3: reejecucion con workflow corregido (bash archiso/build.sh, pasos s
 CI 0.3.4: directorio de estado de Core y Privacy con respaldo en ~/.local/state/nexora (los runners no escriben en /var/lib).
 
 CI 0.3.5: Stealth con respaldo de estado en ~/.local/state/nexora y pruebas de humo etiquetadas por comando.
+
+CI 0.3.5: nexora-stealth con respaldo de estado en ~/.local/state/nexora/stealth.

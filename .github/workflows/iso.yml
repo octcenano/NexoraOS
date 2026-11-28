@@ -9,35 +9,32 @@ on:
 jobs:
   iso:
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:base-devel
     steps:
-      - name: Instalar git para checkout
-        run: |
-          pacman-key --init
-          pacman -Sy --noconfirm archlinux-keyring
-          pacman -S --noconfirm git
-
       - uses: actions/checkout@v4
 
-      - name: Instalar archiso y utilidades
-        run: pacman -Syu --noconfirm archiso git rsync jq
-
-      - name: Ensamblar perfil archiso
-        working-directory: system
-        run: bash archiso/build.sh assemble
-
-      - name: Generar ISO
-        working-directory: system
-        run: bash archiso/build.sh iso
+      # mkarchiso necesita montar proc/dev dentro del airootfs durante pacstrap:
+      # el contenedor del job corre sin privilegios, por lo que la construccion
+      # se hace en un contenedor --privileged sobre la VM del runner.
+      - name: Ensamblar perfil y generar ISO (contenedor privilegiado)
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD:/nexora" -w /nexora \
+            archlinux:base-devel \
+            bash -e -c '
+              pacman-key --init
+              pacman -Sy --noconfirm archlinux-keyring
+              pacman -Syu --noconfirm archiso git rsync jq
+              cd system
+              bash archiso/build.sh assemble
+              bash archiso/build.sh iso
+            '
 
       - name: Verificar ISO generada
-        working-directory: system
         run: |
-          iso=$(ls out/*.iso)
+          iso=$(ls system/out/*.iso)
           test -n "$iso"
           echo "ISO generada: $iso"
-          ls -lh out/
+          ls -lh system/out/
 
       - uses: actions/upload-artifact@v4
         with:

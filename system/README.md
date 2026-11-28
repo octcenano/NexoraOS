@@ -82,3 +82,5 @@ CI 0.3.4: directorio de estado de Core y Privacy con respaldo en ~/.local/state/
 CI 0.3.5: Stealth con respaldo de estado en ~/.local/state/nexora y pruebas de humo etiquetadas por comando.
 
 CI 0.3.5: nexora-stealth con respaldo de estado en ~/.local/state/nexora/stealth.
+
+CI 0.4.0: la ISO se construye en un contenedor privilegiado sobre la VM del runner (mkarchiso necesita montar proc en el airootfs); la ISO usa identidad propia (nexoraos).

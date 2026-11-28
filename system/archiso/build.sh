@@ -19,6 +19,9 @@ if [[ $MODE == all || $MODE == assemble ]]; then
   mkdir -p "$ROOT/work" "$ROOT/out"
   echo "[2/4] copiando perfil releng de archiso"
   cp -a "$REL" "$PROFILE"
+  # Identidad propia de la ISO
+  sed -i 's/^iso_name=.*/iso_name="nexoraos"/' "$PROFILE/profiledef.sh"
+  sed -i 's/^iso_publisher=.*/iso_publisher="NexoraOS <https:\/\/github.com\/octcenano\/nexoraos>"/' "$PROFILE/profiledef.sh"
 
   echo "[3/4] paquetes y herramientas"
   cat "$ROOT/archiso/packages.nexora" >> "$PROFILE/packages.x86_64"

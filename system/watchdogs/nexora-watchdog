@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# nexora-watchdog: supervision y recuperacion de los daemons NexoraOS (P1).
+# Comandos: once | run | status
+set -euo pipefail
+STATE_DIR=${NEXORA_STATE_DIR:-/var/lib/nexora/watchdog}
+if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
+  STATE_DIR="$HOME/.local/state/nexora/watchdog"
+  mkdir -p "$STATE_DIR"
+fi
+STATE="$STATE_DIR/watchdog-state.json"
+INCIDENTS="$STATE_DIR/incidents.jsonl"
+[[ -f $STATE ]] || echo '{}' > "$STATE"
+
+UNITS="nexora-nke.service nexora-sentinel.service nexora-tor.service nexora-ramopt.service"
+
+unit_present() {
+  [[ -e "/etc/systemd/system/$1" || -e "/usr/lib/systemd/system/$1" ]]
+}
+
+check_unit() { # check_unit <unit> -> 0 si activa o no instalada
+  local u=$1
+  if ! unit_present "$u"; then return 0; fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl is-active --quiet "$u" && return 0 || return 1
+  fi
+  return 0
+}
+
+recover() {
+  local u=$1 fails
+  fails=$(jq -r --arg u "$u" '.[$u].fails // 0' "$STATE")
+  fails=$(( fails + 1 ))
+  local t="$STATE_DIR/tmp.$$"
+  jq --arg u "$u" --argjson f "$fails" '.[$u].fails = $f' "$STATE" > "$t" && mv "$t" "$STATE"
+  echo "{\"ts\":$(date +%s),\"unit\":\"$u\",\"fails\":$fails}" >> "$INCIDENTS"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart "$u" 2>/dev/null || true
+  fi
+  # tras 3 fallos consecutivos sin systemctl disponible: incidente critico ya registrado
+}
+
+once() {
+  local u
+  for u in $UNITS; do
+    if check_unit "$u"; then
+      if [[ $(jq -r --arg u "$u" '.[$u].fails // 0' "$STATE") != 0 ]]; then
+        local t="$STATE_DIR/tmp.$$"
+        jq --arg u "$u" '.[$u].fails = 0' "$STATE" > "$t" && mv "$t" "$STATE"
+      fi
+    else
+      recover "$u"
+    fi
+  done
+  return 0
+}
+
+status() {
+  local u
+  echo "watchdog - supervision de daemons"
+  for u in $UNITS; do
+    if check_unit "$u"; then printf '  %-28s OK\n' "$u"; else printf '  %-28s FALLO (fallos: %s)\n' "$u" "$(jq -r --arg u "$u" '.[$u].fails // 0' "$STATE")"; fi
+  done
+  [[ -f $INCIDENTS ]] && tail -3 "$INCIDENTS" | sed 's/^/  /' || true
+  return 0
+}
+
+case "${1:-status}" in
+  once) once;;
+  run) while :; do once; sleep "${WATCHDOG_INTERVAL:-300}"; done;;
+  status) status;;
+  *) echo "uso: nexora-watchdog {once|run|status}"; exit 2;;
+esac

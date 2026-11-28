@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# nexora-nke: Nexora Kernel Engine. Nucleo adaptativo e integracion de P1.
+#
+# Unifica Guardian, Sentinel y Core bajo un bucle de decision con metricas
+# (carga, memoria disponible, temperatura, bateria), adaptacion automatica
+# de perfil, coordinacion de los cinco modos y recuperacion automatica cuando
+# una optimizacion empeora el rendimiento.
+#
+# Comandos: once | run | status | mode <modo> | decide | explain
+set -euo pipefail
+
+SELF=$(readlink -f "$0")
+LIBDIR=$(dirname "$SELF")
+STATE_DIR=${NEXORA_STATE_DIR:-/var/lib/nexora/nke}
+if ! mkdir -p "$STATE_DIR" 2>/dev/null; then
+  STATE_DIR="$HOME/.local/state/nexora/nke"
+  mkdir -p "$STATE_DIR"
+fi
+STATE="$STATE_DIR/state.json"
+DECISIONS="$STATE_DIR/decisions.jsonl"
+INTERVAL=${NKE_INTERVAL:-15}
+
+[[ -f $STATE ]] || echo '{"profile":"office","user_profile":"office","mode":"office","switches":0,"incidents":0}' > "$STATE"
+
+jget() { jq -r ".$1 // \"\"" "$STATE"; }
+jset_s() { local t="$STATE_DIR/tmp.$$"; jq ".$1 = \$v" --arg v "$2" "$STATE" > "$t" && mv "$t" "$STATE"; }
+jset_n() { local t="$STATE_DIR/tmp.$$"; jq ".$1 = $2" "$STATE" > "$t" && mv "$t" "$STATE"; }
+decide_log() { echo "{\"ts\":$(date +%s),\"what\":\"$1\",\"detail\":\"$2\"}" >> "$DECISIONS"; }
+
+perf_cli() {
+  if [[ -x "$LIBDIR/perf/nexora-perf" ]]; then echo "$LIBDIR/perf/nexora-perf";
+  elif [[ -x /usr/lib/nexora/perf/nexora-perf ]]; then echo /usr/lib/nexora/perf/nexora-perf;
+  else echo ""; fi
+}
+
+metrics() {
+  LOAD1=$(awk '{print $1}' /proc/loadavg 2>/dev/null) || LOAD1=0
+  [[ -n ${LOAD1:-} ]] || LOAD1=0
+  MEM_AVAIL=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null) || MEM_AVAIL=-1
+  [[ -n ${MEM_AVAIL:-} ]] || MEM_AVAIL=-1
+  TEMP=0
+  local tf
+  tf=$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -1) || tf=""
+  if [[ -n $tf ]]; then TEMP=$(( tf / 1000 )); fi
+  BAT=$(cat /sys/class/power_supply/BAT*/status 2>/dev/null | head -1) || BAT=unknown
+  [[ -n ${BAT:-} ]] || BAT=unknown
+  CORES=$(nproc 2>/dev/null) || CORES=1
+  [[ -n ${CORES:-} ]] || CORES=1
+}
+
+apply_profile() { # apply_profile <perfil> <motivo>  (decision adaptativa)
+  local p=$1 reason=$2
+  if [[ "$p" == "$(jget profile)" ]]; then return 0; fi
+  # recuperar el rendimiento previo si la optimizacion empeora (ver recovery)
+  local t="$STATE_DIR/tmp.$$"
+  jq '.last_switch = {profile: .profile, load1: .load1, cycles: 0}' "$STATE" > "$t" && mv "$t" "$STATE"
+  jset_s profile "$p"
+  jset_n switches "$(($(jget switches) + 1))"
+  local perf; perf=$(perf_cli)
+  if [[ -n $perf ]]; then "$perf" "$p" >/dev/null 2>&1 || true; fi
+  decide_log "cambio_perfil" "$p ($reason)"
+  log_silent "perfil -> $p ($reason)"
+}
+
+log_silent() { :; }  # el bucle no ensucia la salida; estado y decisiones en ficheros
+
+recovery_check() {
+  local last_load cycles prev
+  last_load=$(jq -r '.last_switch.load1 // 0' "$STATE")
+  cycles=$(jq -r '.last_switch.cycles // 0' "$STATE")
+  if [[ $(jq 'has("last_switch")' "$STATE") == true ]]; then
+    jset_n last_switch.cycles $(( cycles + 1 ))
+    # si tras 3 ciclos la carga crecio mas del 50%, revertir
+    if [[ $(jq -r '.last_switch.cycles' "$STATE") -ge 3 ]] && awk -v a="$LOAD1" -v b="$last_load" 'BEGIN{exit !(a > b*1.5)}'; then
+      prev=$(jq -r '.last_switch.profile' "$STATE")
+      decide_log "recuperacion" "revertir a $prev tras empeorar la carga"
+      jset_n incidents "$(($(jget incidents) + 1))"
+      local t="$STATE_DIR/tmp.$$"
+      jq 'del(.last_switch)' "$STATE" > "$t" && mv "$t" "$STATE"
+      jset_s profile "$prev"
+      local perf; perf=$(perf_cli); [[ -n $perf ]] && "$perf" "$prev" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+decide() {
+  metrics
+  jset_n load1 "$LOAD1"
+  jset_n mem_avail_mb "$MEM_AVAIL"
+  jset_n temp "$TEMP"
+
+  # 1. memoria al limite: liberar caches
+  if [[ $MEM_AVAIL -ge 0 ]] && [[ $MEM_AVAIL -lt 200 ]]; then
+    if [[ -x "$LIBDIR/ramopt/nexora-ramopt" ]]; then
+      "$LIBDIR/ramopt/nexora-ramopt" trim >/dev/null 2>&1 || true
+      decide_log "memoria" "trim con ${MEM_AVAIL} MB disponibles"
+    fi
+  fi
+  # 2. temperatura critica: perfil de bajo consumo
+  if [[ $TEMP -ge 85 ]]; then
+    apply_profile office "temperatura ${TEMP}C"
+  elif [[ $BAT == Discharging ]]; then
+    apply_profile battery "bateria"
+  else
+    # condiciones normales: volver al perfil del usuario
+    local up; up=$(jget user_profile)
+    if [[ -n $up && "$up" != "$(jget profile)" && $TEMP -lt 75 ]]; then
+      apply_profile "$up" "condiciones normales"
+    fi
+  fi
+  recovery_check
+}
+
+mode() { # mode <modo>: integracion de los cinco modos con NKE
+  local m=$1
+  case "$m" in
+    game)    apply_profile game "modo game";;
+    office)  apply_profile office "modo office";;
+    forge)   apply_profile dev "modo forge (desarrollo)";;
+    hacking) apply_profile dev "modo hacking (laboratorio)";;
+    stealth)
+      apply_profile office "modo stealth"
+      local st
+      if [[ -x "$LIBDIR/tor/nexora-stealth" ]]; then st="$LIBDIR/tor/nexora-stealth";
+      elif [[ -x /usr/lib/nexora/tor/nexora-stealth ]]; then st=/usr/lib/nexora/tor/nexora-stealth; else st=""; fi
+      [[ -n $st ]] && "$st" on advanced >/dev/null 2>&1 || true
+      decide_log "modo" "stealth activado (advanced)"
+      ;;
+    *) echo "modos: game office forge hacking stealth"; exit 2;;
+  esac
+  jset_s mode "$m"
+  jset_s user_profile "$(jget profile)"
+  echo "[nke] modo $m activo (perfil $(jget profile))"
+}
+
+integration_status() {
+  local s
+  # Sentinel
+  if systemctl is-active nexora-sentinel.service >/dev/null 2>&1; then s="activo";
+  elif [[ -e /etc/systemd/system/nexora-sentinel.service || -e /usr/lib/systemd/system/nexora-sentinel.service ]]; then s="instalado (unidad presente)";
+  else s="no instalado"; fi
+  printf 'sentinel:   %s\n' "$s"
+  # Core
+  local core_state="" f
+  for f in /var/lib/nexora/core/state.json "$HOME/.local/state/nexora/core/state.json"; do
+    if [[ -f $f ]]; then core_state=$(jq -r '.active // "?"' "$f" 2>/dev/null); break; fi
+  done
+  printf 'core:       ranura %s\n' "${core_state:-desconocida}"
+  # Guardian
+  if [[ -f "$HOME/.local/share/nexora/guardian/audit.jsonl" ]]; then s="auditoria activa"; else s="sin auditoria"; fi
+  printf 'guardian:   %s\n' "$s"
+}
+
+cmd_status() {
+  metrics
+  echo "NKE - nucleo adaptativo"
+  echo "  modo: $(jget mode)  perfil: $(jget profile)  cambios: $(jget switches)  incidentes: $(jget incidents)"
+  echo "  carga: $LOAD1  memoria disponible: ${MEM_AVAIL} MB  temperatura: ${TEMP}C  bateria: $BAT"
+  integration_status
+  [[ -f $DECISIONS ]] && echo "  ultimas decisiones:" && tail -3 "$DECISIONS" | sed 's/^/    /' || true
+  return 0
+}
+
+cmd_once() { decide; cmd_status >/dev/null; return 0; }
+
+cmd_run() {
+  log_silent "bucle NKE iniciado (intervalo ${INTERVAL}s)"
+  while :; do
+    decide || true
+    sleep "$INTERVAL"
+  done
+}
+
+case "${1:-status}" in
+  once) cmd_once;;
+  run) cmd_run;;
+  status) cmd_status;;
+  mode) mode "${2:?falta modo}";;
+  decide) decide; echo "ciclo de decision ejecutado";;
+  explain) sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//';;
+  *) echo "uso: nexora-nke {once|run|status|mode <m>|decide|explain}"; exit 2;;
+esac

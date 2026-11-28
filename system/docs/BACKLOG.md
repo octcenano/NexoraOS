@@ -11,19 +11,19 @@ validacion y construccion de ISO funcional (archiso). El resto queda pendiente
 y se gestiona por fases (seccion 16).
 
 ## 1. Nucleo adaptativo y Nexora Kernel Engine
-- [ ] Aplicacion real de politicas de CPU
-- [ ] Gestion dinamica de RAM entre aplicaciones y agentes
+- Parcial: aplicacion real de politicas de CPU (perfiles + hwprofile + NKE)
+- Parcial: gestion dinamica de RAM (nexora-ramopt + decision de NKE)
 - [ ] Asignacion inteligente de recursos segun tareas
 - [ ] Monitorizacion de GPU y VRAM
-- [ ] Monitorizacion de bateria
-- [ ] Aplicacion real de cgroups en hardware
-- [ ] Programas eBPF propios (parcial: sondas en ebpf/)
-- [ ] Coordinacion Core/Engine/Guardian/Adapt
-- [ ] Adaptacion automatica por hardware, temperatura y carga
-- [ ] Prioridades inteligentes de procesos
-- [ ] Recuperacion automatica si una optimizacion empeora el rendimiento
+- [x] Monitorizacion de bateria (metricas de nexora-nke)
+- Parcial: cgroups reales (limites systemd por daemon; por app via Cell/NetWall)
+- Parcial: programas eBPF propios (sondas en ebpf/)
+- [x] Coordinacion Core/Engine/Guardian/Adapt (nexora-nke)
+- [x] Adaptacion automatica por hardware, temperatura y carga (bucle NKE)
+- [ ] Prioridades inteligentes de procesos (pendiente: ionice/nice adaptativos)
+- [x] Recuperacion automatica si una optimizacion empeora el rendimiento (NKE)
 - [ ] Deteccion de cuellos de botella
-- [ ] Optimizacion dinamica sin cambio manual de perfil
+- [ ] Optimizacion dinamica completa sin cambio manual de perfil
 
 ## 2. Sentinel
 - [x] Sentinel AV: antivirus defensivo (nexora-antivirus)
@@ -36,7 +36,7 @@ y se gestiona por fases (seccion 16).
 - [x] Integracion con eBPF
 - [x] Cuarentena
 - [x] Historial de amenazas (events.jsonl)
-- [ ] Watchdogs especializados
+- [x] Watchdogs especializados (nexora-watchdog + WatchdogSec de nexora-nke)
 - [ ] Integracion con Guardian
 - [ ] Recuperacion automatica ante incidentes
 - [ ] Proteccion en tiempo real configurable
@@ -90,16 +90,18 @@ y se gestiona por fases (seccion 16).
   diagnostico y recuperacion automatica, NGNE, validacion en hardware real.
 
 ## 11. IA y agentes
-- Parcial: Guardian con punto de enganche llama.cpp.
+- Parcial: Guardian con punto de enganche llama.cpp; coordinacion de agentes
+  via nexora-nke (P1).
 - Pendiente: Model Manager, seleccion automatica, requisitos RAM/VRAM,
-  coordinacion de agentes, centros de agentes y modelos.
+  centros de agentes y modelos.
 
 ## 12. Watchdogs, daemons y mantenimiento
 - Parcial: nexora-doctor (5 comprobaciones + --auto), timers nexora-doctor y
-  nexora-lens, limites MemoryMax en daemons.
-- Pendiente: validacion en hardware real, supervision cruzada de servicios,
-  mantenimiento programado completo, prevencion de bucles de reinicio,
-  comprobacion de servicios huerfanos.
+  nexora-lens, limites MemoryMax en daemons, nexora-watchdog (supervision y
+  reinicio de nke, sentinel, tor y ramopt), nexora-nke como daemon residente
+  con WatchdogSec y recuperacion automatica.
+- Pendiente: validacion en hardware real, mantenimiento programado completo,
+  prevencion de bucles de reinicio, comprobacion de servicios huerfanos.
 
 ## 13. Distribucion e instalador
 - [x] ISO reproducible construida por CI (archiso + GitHub Actions, job iso)

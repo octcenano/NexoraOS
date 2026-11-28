@@ -25,6 +25,8 @@ Herramientas del sistema NexoraOS, distribucion Linux propia basada en Arch.
 | eBPF transversal | sondas + cargador | ebpf/ |
 | Kernel | linux-nexora | kernel/ |
 | Tuning por hardware | nexora-hwprofile | tuning/ |
+| NKE (nucleo adaptativo, P1) | nexora-nke | nke/ |
+| Watchdogs (P1) | nexora-watchdog | watchdogs/ |
 | RAM < 500 MB | nexora-ramopt | ramopt/ |
 | Sigilo Tor | nexora-tor + nexora-stealth | tor/ |
 
@@ -70,6 +72,17 @@ hostname, zona horaria, usuario; esquema fijo GPT + btrfs A/B con @root-b como
 instantanea identica desde el primer arranque y GRUB con entrada de respaldo.
 Modo no interactivo para QEMU: --auto <disco> --yes [--profile P] [--stealth N].
 Al arrancar el live se ofrece ejecutar el instalador automaticamente.
+
+## NKE y watchdogs (P1 Integracion)
+
+nexora-nke es el nucleo adaptativo: unifica Sentinel, Guardian y Core bajo un
+bucle de decision (carga, memoria disponible, temperatura, bateria). Aplica
+perfiles automaticamente, coordina los cinco modos (game, office, forge,
+hacking, stealth) y revierte cualquier cambio que empeore el rendimiento
+(recuperacion automatica). nexora-watchdog supervisa los daemons y los
+reinicia. Ambos operan con presupuestos de memoria (MemoryMax 64M y 32M).
+Comandos: nexora-nke {once|run|status|mode <m>|decide|explain};
+nexora-watchdog {once|run|status}.
 
 ## Estado y pendientes
 

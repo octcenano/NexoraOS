@@ -1,0 +1,18 @@
+[Unit]
+Description=NexoraOS: NKE, nucleo adaptativo e integracion (P1)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/nexora/nke/nexora-nke run
+WatchdogSec=120
+Restart=on-failure
+RestartSec=10
+MemoryHigh=48M
+MemoryMax=64M
+CPUQuota=5%
+Nice=10
+Environment=NKE_INTERVAL=15
+
+[Install]
+WantedBy=multi-user.target

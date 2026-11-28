@@ -1,0 +1,12 @@
+[Unit]
+Description=NexoraOS: supervision de daemons
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nexora/watchdogs/nexora-watchdog once
+MemoryMax=32M
+Nice=15
+
+[Install]
+WantedBy=multi-user.target

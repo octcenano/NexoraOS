@@ -58,29 +58,14 @@ disponible en la pagina del workflow.
 
 Construccion local: instale archiso y ejecute ./archiso/build.sh; el script
 ensambla el perfil a partir del releng de Arch, incorpora los paquetes de
-archiso/packages.nexora, copia las herramientas dentro del airootfs y genera la
-ISO en out/. La ISO incluye el instalador guiado nexora-installer.sh (particionado
-automatico, ranuras A/B en btrfs, GRUB, region y teclado en espanol).
+archiso/packages.nexora (archinstall queda excluido deliberadamente), copia las
+herramientas dentro del airootfs y genera la ISO en out/. La ISO incluye el
+instalador propio nexora-installer (sin archinstall): modo interactivo o --auto
+no interactivo, particionado GPT, ranuras A/B en btrfs con @root-b como
+instantanea identica desde el primer arranque, GRUB con entrada de respaldo,
+region es_ES y teclado es, y registro en /var/log/nexora-installer.log.
 
 ## Estado y pendientes
 
 Vea docs/BACKLOG.md para el inventario completo de funcionalidades pendientes y
 los criterios de calidad obligatorios (tests, watchdogs, daemons, seguridad).
-
-## Correccion del CI ISO (0.3.1)
-
-build.sh se ejecuta con bash porque push_files no conserva el bit de ejecucion (100644); el contenedor instala git antes del checkout y refresca archlinux-keyring antes de sincronizar.
-
-## CI ISO 0.3.2
-
-El paso de ISO queda separado en dos fases (ensamblado y mkarchiso) para localizar fallos con precision.
-
-CI ISO 0.3.3: reejecucion con workflow corregido (bash archiso/build.sh, pasos separados).
-
-CI 0.3.4: directorio de estado de Core y Privacy con respaldo en ~/.local/state/nexora (los runners no escriben en /var/lib).
-
-CI 0.3.5: Stealth con respaldo de estado en ~/.local/state/nexora y pruebas de humo etiquetadas por comando.
-
-CI 0.3.5: nexora-stealth con respaldo de estado en ~/.local/state/nexora/stealth.
-
-CI 0.4.0: la ISO se construye en un contenedor privilegiado sobre la VM del runner (mkarchiso necesita montar proc en el airootfs); la ISO usa identidad propia (nexoraos).

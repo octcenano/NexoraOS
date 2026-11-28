@@ -103,8 +103,10 @@ y se gestiona por fases (seccion 16).
 
 ## 13. Distribucion e instalador
 - [x] ISO reproducible construida por CI (archiso + GitHub Actions, job iso)
-- [x] Instalador guiado en espanol (archiso/airootfs/usr/local/bin/nexora-installer.sh:
-      particionado automatico, A/B en btrfs, GRUB, region es_ES y teclado es)
+- [x] Instalador propio nexora-installer (sin archinstall): modo interactivo y
+      --auto no interactivo, GPT (ESP o BIOS boot), A/B en btrfs con @root-b
+      como instantanea identica desde el inicio, GRUB con entrada de respaldo
+      @root-b, region es_ES y teclado es, registro en /var/log
 - Parcial: imagen de recuperacion (recovery/), PKGBUILD del kernel
 - Pendiente: arranque validado en QEMU y hardware fisico, instalador grafico,
   systemd-boot, recuperacion ante instalaciones fallidas, primer arranque,

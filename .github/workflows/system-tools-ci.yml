@@ -31,16 +31,16 @@ jobs:
         run: |
           set -e
           chmod +x core/nexora-core app-time/nexora-app netwall/nexora-netwall vault/nexora-vault persona/nexora-persona privacy/nexora-privacy perf/nexora-perf ramopt/nexora-ramopt tor/nexora-tor tor/nexora-stealth tuning/nexora-hwprofile sentinel/antivirus/nexora-antivirus
-          ./core/nexora-core status
-          ./netwall/nexora-netwall show
-          ./vault/nexora-vault list
-          ./privacy/nexora-privacy status
-          ./perf/nexora-perf status
-          ./ramopt/nexora-ramopt status
-          ./tor/nexora-tor status
-          ./tor/nexora-stealth status
-          ./tuning/nexora-hwprofile status
-          ./sentinel/antivirus/nexora-antivirus status
+          echo '== core';       ./core/nexora-core status
+          echo '== netwall';    ./netwall/nexora-netwall show
+          echo '== vault';      ./vault/nexora-vault list
+          echo '== privacy';    ./privacy/nexora-privacy status
+          echo '== perf';       ./perf/nexora-perf status
+          echo '== ramopt';     ./ramopt/nexora-ramopt status
+          echo '== tor';        ./tor/nexora-tor status
+          echo '== stealth';    ./tor/nexora-stealth status
+          echo '== hwprofile';  ./tuning/nexora-hwprofile status
+          echo '== antivirus';  ./sentinel/antivirus/nexora-antivirus status
 
       - name: Pruebas de humo de CLI (python, rutas de uso)
         run: |

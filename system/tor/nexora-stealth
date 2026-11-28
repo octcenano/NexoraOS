@@ -7,8 +7,11 @@
 #   advanced  : balanced + interruptor nftables (solo el usuario tor puede salir).
 #   isolated  : advanced + microfono y camara bloqueados + sesiones aisladas.
 set -euo pipefail
-STATE=/var/lib/nexora/stealth
-mkdir -p "$STATE"
+STATE=${NEXORA_STATE_DIR:-/var/lib/nexora/stealth}
+if ! mkdir -p "$STATE" 2>/dev/null; then
+  STATE="$HOME/.local/state/nexora/stealth"
+  mkdir -p "$STATE"
+fi
 TORCONF=/etc/tor/torrc
 
 start_tor() {
